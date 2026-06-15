@@ -1,0 +1,142 @@
+"use client"
+import { useCallback, useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
+import Layout from "@/components/layout/Layout"
+import { api } from "@/lib/api"
+
+export const dynamic = "force-dynamic"
+
+const STATUS: Record<string, { cls: string; label: string }> = {
+  draft: { cls: "badge-amber", label: "草稿" },
+  active: { cls: "badge-green", label: "已上架" },
+  archived: { cls: "badge-red", label: "已归档" },
+}
+const BADGE = (s: string) => {
+  const st = STATUS[s] || { cls: "badge-amber", label: s || "—" }
+  return <span className={`badge ${st.cls}`}><span className="badge-dot" />{st.label}</span>
+}
+
+export default function ProductsPage() {
+  const router = useRouter()
+  const [data, setData] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState("")
+  const [statusFilter, setStatusFilter] = useState("")
+  const [busy, setBusy] = useState<string>("")
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams()
+      if (statusFilter) params.set("status", statusFilter)
+      if (search) params.set("search", search)
+      const d: any = await api.getProducts(params.toString())
+      setData(d?.items || [])
+    } catch { setData([]) }
+    setLoading(false)
+  }, [search, statusFilter])
+
+  useEffect(() => { load() }, [load])
+
+  const act = async (id: string, fn: () => Promise<any>) => { setBusy(id); try { await fn() } catch (e: any) { alert(e?.message || "操作失败") } setBusy(""); load() }
+  const publish = (p: any) => act(p.id, () => api.publishProduct(p.id))
+  const unpublish = (p: any) => act(p.id, () => api.unpublishProduct(p.id))
+  const edit = (id: string) => router.push(`/products/${id}`)
+
+  // 批量删除：勾选 + 确认弹框
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [delConfirm, setDelConfirm] = useState<string[] | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const toggleSel = (id: string) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const pageIds = data.map(p => p.id)
+  const allSelected = data.length > 0 && pageIds.every(id => selected.has(id))
+  const toggleAll = () => setSelected(s => { const n = new Set(s); if (allSelected) pageIds.forEach(id => n.delete(id)); else pageIds.forEach(id => n.add(id)); return n })
+  const performDelete = async () => {
+    if (!delConfirm) return
+    setDeleting(true)
+    for (const id of delConfirm) { try { await api.deleteProduct(id) } catch { /* skip */ } }
+    setDeleting(false); setDelConfirm(null); setSelected(new Set()); load()
+  }
+
+  return (
+    <Layout>
+      <div className="page-header">
+        <h1 className="page-title">📦 商品管理 <span className="page-subtitle">在后台增删改查商品并发布到 Shopify</span></h1>
+        <button className="btn btn-primary" onClick={() => router.push("/products/new")}>+ 添加商品</button>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+        <input className="input" placeholder="搜索商品标题…" value={search} onChange={e => setSearch(e.target.value)} style={{ width: 240 }} onKeyDown={e => e.key === "Enter" && load()} />
+        <select className="input" value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ width: 140 }}>
+          <option value="">全部状态</option>
+          <option value="draft">草稿</option>
+          <option value="active">已上架</option>
+          <option value="archived">已归档</option>
+        </select>
+        <button className="btn btn-ghost btn-sm" onClick={() => load()} disabled={loading}>{loading ? "⏳ 刷新中…" : "🔄 刷新"}</button>
+      </div>
+
+      {selected.size > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", marginBottom: 8, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 6 }}>
+          <span style={{ fontSize: ".82rem", fontWeight: 600 }}>已选 {selected.size} 项</span>
+          <button className="btn btn-sm" style={{ background: "var(--red)", color: "#fff" }} onClick={() => setDelConfirm([...selected])}>🗑 批量删除</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())}>清除选择</button>
+        </div>
+      )}
+
+      <div className="card">
+        <div className="table-wrap">
+          <table>
+            <thead><tr>
+              <th style={{ width: 34 }}><input type="checkbox" checked={allSelected} onChange={toggleAll} title="全选本页" /></th>
+              <th style={{ width: 50 }}>主图</th><th>商品</th><th style={{ width: 70 }}>价格</th>
+              <th style={{ width: 60 }}>库存</th><th style={{ width: 90 }}>状态</th><th style={{ width: 110 }}>Shopify</th>
+              <th style={{ width: 130 }}>更新时间</th><th style={{ width: 180 }}>操作</th>
+            </tr></thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={9} className="table-empty"><div className="spinner" /></td></tr>
+              ) : data.length === 0 ? (
+                <tr><td colSpan={9} className="table-empty"><div className="empty-icon">📦</div>暂无商品，点击「+ 添加商品」新建</td></tr>
+              ) : data.map(p => (
+                <tr key={p.id} style={{ cursor: "pointer" }} onClick={() => edit(p.id)}>
+                  <td onClick={e => e.stopPropagation()}><input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSel(p.id)} /></td>
+                  <td>{p.image ? <img src={p.image} alt="" style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4 }} onError={e => { (e.target as HTMLImageElement).style.display = "none" }} /> : <span style={{ fontSize: 20 }}>📷</span>}</td>
+                  <td><div style={{ fontWeight: 500 }}>{p.title || "未命名"}</div><div style={{ fontSize: ".7rem", color: "var(--gray-400)" }}>{p.variant_count} 个变体 · {p.vendor || "无供应商"}</div></td>
+                  <td>{p.price != null ? `$${p.price}` : "—"}</td>
+                  <td>{p.inventory ?? 0}</td>
+                  <td>{BADGE(p.status)}</td>
+                  <td style={{ fontSize: ".72rem", color: "var(--gray-400)", fontFamily: "monospace" }}>{p.shopify_product_id ? `#${String(p.shopify_product_id).slice(-8)}` : "未发布"}</td>
+                  <td style={{ fontSize: ".72rem", color: "var(--gray-500)", whiteSpace: "nowrap" }}>{p.updated_at ? new Date(p.updated_at).toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                  <td onClick={e => e.stopPropagation()}>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "nowrap", whiteSpace: "nowrap", fontSize: ".78rem" }}>
+                      {p.status === "active"
+                        ? <a style={{ color: "var(--gray-600)", cursor: "pointer" }} onClick={() => unpublish(p)}>{busy === p.id ? "…" : "下架"}</a>
+                        : <a style={{ color: "var(--primary, #6366f1)", cursor: "pointer" }} onClick={() => publish(p)}>{busy === p.id ? "…" : "发布"}</a>}
+                      <a style={{ color: "var(--primary, #6366f1)", cursor: "pointer" }} onClick={() => edit(p.id)}>编辑</a>
+                      <a style={{ color: "var(--red)", cursor: "pointer" }} onClick={() => setDelConfirm([p.id])}>删除</a>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {delConfirm && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 99, padding: 24 }} onClick={() => !deleting && setDelConfirm(null)}>
+          <div style={{ background: "#fff", borderRadius: 8, width: 380, maxWidth: "94vw", padding: 20, boxShadow: "0 8px 32px rgba(0,0,0,.2)" }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontWeight: 700, marginBottom: 10 }}>确认删除</div>
+            <p style={{ fontSize: ".88rem", lineHeight: 1.6 }}>确定删除选中的 <strong style={{ color: "var(--red)" }}>{delConfirm.length}</strong> 个商品？此操作不可撤销。</p>
+            <p style={{ fontSize: ".78rem", color: "var(--gray-500)", marginTop: 6 }}>已发布到 Shopify 的商品也会尝试同步删除。</p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 }}>
+              <button className="btn btn-secondary" disabled={deleting} onClick={() => setDelConfirm(null)}>取消</button>
+              <button className="btn" style={{ background: "var(--red)", color: "#fff" }} disabled={deleting} onClick={performDelete}>{deleting ? "删除中…" : "确认删除"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </Layout>
+  )
+}

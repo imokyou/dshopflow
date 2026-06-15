@@ -1,0 +1,1356 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DropShipFlow — 产品原型</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --border: #e2e8f0;
+      --text: #1e293b;
+      --text-secondary: #64748b;
+      --text-muted: #94a3b8;
+      --primary: #6366f1;
+      --primary-hover: #4f46e5;
+      --primary-light: #eef2ff;
+      --success: #10b981;
+      --success-light: #ecfdf5;
+      --warning: #f59e0b;
+      --warning-light: #fffbeb;
+      --danger: #ef4444;
+      --danger-light: #fef2f2;
+      --info: #3b82f6;
+      --info-light: #eff6ff;
+      --radius: 8px;
+      --radius-lg: 12px;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,.05);
+      --shadow: 0 1px 3px rgba(0,0,0,.1), 0 1px 2px rgba(0,0,0,.06);
+      --shadow-lg: 0 4px 6px rgba(0,0,0,.07), 0 10px 15px rgba(0,0,0,.1);
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: var(--font);
+      background: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    /* Screen Switcher */
+    .prototype-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .screen-tabs {
+      display: flex;
+      gap: 8px;
+      background: white;
+      border-radius: var(--radius-lg);
+      padding: 6px;
+      box-shadow: var(--shadow);
+    }
+    .screen-tab {
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      font-size: 13px;
+      font-family: var(--font);
+      color: var(--text-secondary);
+      font-weight: 500;
+      transition: all .15s;
+      white-space: nowrap;
+    }
+    .screen-tab.active {
+      background: var(--primary);
+      color: white;
+    }
+    .screen-tab:hover:not(.active) {
+      background: var(--primary-light);
+      color: var(--primary);
+    }
+
+    .screen-container {
+      position: relative;
+      box-shadow: var(--shadow-lg);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      background: var(--bg);
+    }
+    .screen-container.popup {
+      width: 380px;
+      border: 1px solid var(--border);
+    }
+    .screen-container.dashboard {
+      width: 1100px;
+      max-width: 95vw;
+    }
+    .screen {
+      display: none;
+    }
+    .screen.active {
+      display: block;
+    }
+
+    /* POPUP STYLES */
+    .popup-header {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: white;
+    }
+    .popup-header .logo {
+      font-weight: 700;
+      font-size: 15px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .popup-header .logo svg { width: 20px; height: 20px; }
+    .popup-header .settings-btn {
+      background: rgba(255,255,255,.2);
+      border: none;
+      color: white;
+      width: 32px; height: 32px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .popup-body { padding: 16px; }
+    .product-card {
+      background: white;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+    .product-card .image-placeholder {
+      height: 140px;
+      background: linear-gradient(135deg, #f1f5f9, #e2e8f0);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 48px;
+    }
+    .product-card .info {
+      padding: 12px;
+    }
+    .product-card .title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1.4;
+      margin-bottom: 4px;
+    }
+    .product-card .price {
+      font-size: 16px;
+      font-weight: 700;
+      color: #ef4444;
+    }
+    .product-card .meta {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+
+    .info-row {
+      background: white;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+    }
+    .info-row .label {
+      color: var(--text-secondary);
+      min-width: 70px;
+    }
+    .info-row .value {
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      color: var(--text-muted);
+      margin: 12px 0 6px;
+    }
+
+    select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: var(--font);
+      background: white;
+      color: var(--text);
+      cursor: pointer;
+    }
+    .option-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .toggle-option {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .toggle-option.on {
+      border-color: var(--primary);
+      background: var(--primary-light);
+    }
+    .toggle-option .dot {
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      border: 2px solid #cbd5e1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .toggle-option.on .dot {
+      border-color: var(--primary);
+      background: var(--primary);
+      color: white;
+      font-size: 10px;
+    }
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .btn {
+      flex: 1;
+      padding: 10px;
+      border-radius: 8px;
+      border: none;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: var(--font);
+      transition: all .15s;
+    }
+    .btn-secondary {
+      background: #f1f5f9;
+      color: var(--text-secondary);
+    }
+    .btn-secondary:hover { background: #e2e8f0; }
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(99, 102, 241, .4);
+    }
+
+    /* DASHBOARD STYLES */
+    .dash-layout { display: flex; height: 680px; }
+    .dash-sidebar {
+      width: 220px;
+      background: white;
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+    .dash-sidebar .brand {
+      padding: 16px 20px;
+      font-weight: 700;
+      font-size: 16px;
+      color: var(--primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-item {
+      padding: 10px 20px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      transition: all .15s;
+      border-left: 3px solid transparent;
+      font-weight: 500;
+    }
+    .nav-item:hover { background: #f8fafc; color: var(--text); }
+    .nav-item.active {
+      background: var(--primary-light);
+      color: var(--primary);
+      border-left-color: var(--primary);
+    }
+    .nav-item .icon { font-size: 16px; width: 20px; text-align: center; }
+    .nav-section {
+      padding: 16px 20px 6px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .dash-main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+      background: var(--bg);
+    }
+    .dash-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+    .dash-header h2 { font-size: 20px; font-weight: 700; color: var(--text); }
+    .btn-sm {
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: none;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: var(--font);
+    }
+    .btn-primary-sm {
+      background: var(--primary);
+      color: white;
+    }
+    .btn-primary-sm:hover { background: var(--primary-hover); }
+
+    /* Stats Cards */
+    .stat-cards {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .stat-card {
+      background: white;
+      border-radius: var(--radius-lg);
+      padding: 16px;
+      border: 1px solid var(--border);
+    }
+    .stat-card .stat-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
+    .stat-card .stat-value { font-size: 24px; font-weight: 700; color: var(--text); }
+    .stat-card .stat-sub { font-size: 11px; color: var(--success); margin-top: 4px; }
+
+    /* Table */
+    .table-container {
+      background: white;
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .table-header {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .search-input {
+      padding: 6px 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 12px;
+      width: 220px;
+      font-family: var(--font);
+    }
+    .filter-select {
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: var(--font);
+      background: white;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th {
+      text-align: left;
+      padding: 10px 16px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      background: #f8fafc;
+      border-bottom: 1px solid var(--border);
+    }
+    td {
+      padding: 10px 16px;
+      font-size: 13px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f8fafc; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-draft { background: var(--warning-light); color: #92400e; }
+    .badge-published { background: var(--success-light); color: #065f46; }
+    .badge-failed { background: var(--danger-light); color: #991b1b; }
+    .badge-processing { background: var(--info-light); color: #1e40af; }
+    .img-thumb {
+      width: 40px; height: 40px;
+      border-radius: 4px;
+      background: #f1f5f9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+    }
+
+    /* Progress */
+    .progress-container { margin: 16px 0; }
+    .progress-steps { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+    .progress-step {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      padding: 8px 12px;
+      background: white;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+    .progress-step .step-icon { font-size: 16px; width: 24px; text-align: center; }
+    .progress-step .step-name { flex: 1; font-weight: 500; }
+    .progress-step .step-status { font-size: 11px; color: var(--text-secondary); }
+    .progress-step.done { border-left: 3px solid var(--success); }
+    .progress-step.active { border-left: 3px solid var(--info); }
+    .progress-step.pending { border-left: 3px solid #e2e8f0; opacity: .6; }
+    .progress-bar {
+      height: 8px;
+      background: #e2e8f0;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      background: linear-gradient(90deg, var(--primary), #8b5cf6);
+      transition: width .5s ease;
+    }
+
+    /* Pricing Rule Editor */
+    .rule-editor {
+      background: white;
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      padding: 20px;
+      max-width: 700px;
+    }
+    .rule-editor h3 { font-size: 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+    .form-group { margin-bottom: 16px; }
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+    .form-group input, .form-group select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: var(--font);
+    }
+    .tier-table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+    .tier-table th { font-size: 11px; padding: 6px 10px; background: #f8fafc; }
+    .tier-table td { font-size: 12px; padding: 6px 10px; }
+    .tier-table input {
+      width: 80px;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 12px;
+      font-family: var(--font);
+    }
+    .calculator {
+      background: var(--primary-light);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      margin-top: 12px;
+      font-size: 13px;
+    }
+    .calculator .calc-row {
+      display: flex;
+      justify-content: space-between;
+      margin: 4px 0;
+    }
+    .calculator .calc-result {
+      font-weight: 700;
+      color: var(--primary);
+      font-size: 16px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(99, 102, 241, .2);
+    }
+
+    /* Notification Toast */
+    .toast {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: white;
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
+      padding: 16px 20px;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      max-width: 360px;
+      animation: slideIn .3s ease-out;
+      z-index: 100;
+      border-left: 4px solid var(--success);
+    }
+    @keyframes slideIn {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+    .toast .toast-icon { font-size: 24px; }
+    .toast .toast-title { font-weight: 600; font-size: 14px; margin-bottom: 2px; }
+    .toast .toast-body { font-size: 12px; color: var(--text-secondary); }
+    .toast .toast-actions { margin-top: 8px; display: flex; gap: 8px; }
+    .toast .toast-btn {
+      padding: 4px 10px;
+      border-radius: 4px;
+      border: none;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: var(--font);
+    }
+    .toast .toast-btn.primary {
+      background: var(--primary);
+      color: white;
+    }
+    .toast .toast-btn.secondary {
+      background: #f1f5f9;
+      color: var(--text-secondary);
+    }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+<div class="prototype-wrapper">
+
+  <!-- Screen Tabs -->
+  <div class="screen-tabs">
+    <button class="screen-tab active" onclick="showScreen('popup')">🔌 Chrome 插件 Popup</button>
+    <button class="screen-tab" onclick="showScreen('super-admin')">👑 超管控制台</button>
+    <button class="screen-tab" onclick="showScreen('dashboard')">📊 管理后台</button>
+    <button class="screen-tab" onclick="showScreen('task-detail')">🔄 任务详情</button>
+    <button class="screen-tab" onclick="showScreen('pricing')">💰 定价规则</button>
+    <button class="screen-tab" onclick="showScreen('audit-log')">📋 审计日志</button>
+  </div>
+
+  <!-- SCREEN 1: Chrome Extension Popup -->
+  <div id="screen-popup" class="screen-container popup screen active">
+    <div class="popup-header">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+        </svg>
+        DropShipFlow
+      </div>
+      <div style="display:flex;gap:6px;">
+        <button id="auth-toggle-btn" class="settings-btn" title="切换登录状态" onclick="toggleAuth()" style="font-size:13px;width:auto;padding:0 8px;">🔓</button>
+        <button class="settings-btn" title="设置">⚙️</button>
+      </div>
+    </div>
+
+    <!-- STATE A: 未登录 -->
+    <div id="popup-logged-out" class="popup-body" style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-height:400px;gap:16px;">
+      <div style="font-size:48px;">🔌</div>
+      <div>
+        <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:4px;">欢迎使用 DropShipFlow</div>
+        <div style="font-size:12px;color:var(--text-secondary);">1688 商品一键上架到 Shopify</div>
+      </div>
+      <div style="font-size:13px;color:var(--text-muted);">请先登录你的账号以开始使用</div>
+      <button class="btn-primary" style="width:220px;padding:12px;border-radius:8px;border:none;font-size:14px;font-weight:600;cursor:pointer;font-family:var(--font);background:linear-gradient(135deg,#6366f1,#8b5cf6);color:white;display:flex;align-items:center;justify-content:center;gap:6px;">
+        🔗 登录 / 注册
+      </button>
+      <div style="font-size:11px;color:var(--text-muted);max-width:250px;">
+        点击后将打开 Web 管理后台<br>
+        admin.dropshipflow.com<br>
+        登录后自动连接插件
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:20px;">
+        没有账号？访问 admin.dropshipflow.com 注册
+      </div>
+    </div>
+
+    <!-- STATE B: 已登录 -->
+    <div id="popup-logged-in" class="popup-body" style="display:none;">
+
+      <!-- Product Card -->
+      <div class="product-card">
+        <div class="image-placeholder">👕</div>
+        <div class="info">
+          <div class="title">夏季新款纯棉T恤 男士短袖宽松休闲百搭圆领...</div>
+          <div class="price">¥12.50 - ¥25.00</div>
+          <div class="meta">1688 ID: 123456789 · 月销 2,341 件</div>
+        </div>
+      </div>
+
+      <!-- Product Info -->
+      <div class="info-row">
+        <span class="label">📦 SKU 数量</span>
+        <span class="value">12 个规格</span>
+      </div>
+      <div class="info-row">
+        <span class="label">🖼️ 素材图片</span>
+        <span class="value">8 张 (主图+详情)</span>
+      </div>
+      <div class="info-row">
+        <span class="label">🎬 视频</span>
+        <span class="value">无</span>
+      </div>
+
+      <!-- Import Options -->
+      <div class="section-label">⚙️ 导入选项</div>
+      <div class="info-row" style="flex-direction: column;">
+        <div style="margin-bottom: 8px; width: 100%;">
+          <span style="font-size:11px;color:var(--text-secondary)">目标店铺</span>
+          <select>
+            <option>My Store (myshop.myshopify.com)</option>
+            <option>Store B (store-b.myshopify.com)</option>
+          </select>
+        </div>
+        <div style="margin-bottom: 8px; width: 100%;">
+          <span style="font-size:11px;color:var(--text-secondary)">定价规则</span>
+          <select>
+            <option>默认定价 (3.0x 加价)</option>
+            <option>家居品类规则 (3.5x 加价)</option>
+            <option>高客单价规则 (2.0x 加价)</option>
+          </select>
+        </div>
+        <div style="width: 100%;">
+          <span style="font-size:11px;color:var(--text-secondary)">翻译语言</span>
+          <select>
+            <option>English</option>
+            <option>Deutsch (German)</option>
+            <option>Français (French)</option>
+            <option>Español (Spanish)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Toggle Options -->
+      <div class="section-label">🔧 处理选项</div>
+      <div class="option-grid">
+        <div class="toggle-option on" onclick="this.classList.toggle('on')">
+          <span class="dot">✓</span> 去水印
+        </div>
+        <div class="toggle-option on" onclick="this.classList.toggle('on')">
+          <span class="dot">✓</span> 白底主图
+        </div>
+        <div class="toggle-option" onclick="this.classList.toggle('on')">
+          <span class="dot"></span> 营销主图
+        </div>
+        <div class="toggle-option on" onclick="this.classList.toggle('on')">
+          <span class="dot">✓</span> AI 翻译
+        </div>
+      </div>
+
+      <!-- Buttons -->
+      <div class="btn-row">
+        <button class="btn btn-secondary">取消</button>
+        <button class="btn btn-primary" onclick="simulateImport()">🚀 一键上架</button>
+      </div>
+
+      <!-- Login footer -->
+      <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;font-size:11px;">
+        <span style="color:var(--text-secondary);">👤 已登录: <strong style="color:var(--text);">user@example.com</strong></span>
+        <button onclick="toggleAuth()" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:11px;font-family:var(--font);">退出</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- SCREEN 2: Admin Dashboard -->
+  <div id="screen-dashboard" class="screen-container dashboard screen">
+    <div class="dash-layout">
+      <!-- Sidebar -->
+      <div class="dash-sidebar">
+        <div class="brand">⚡ DropShipFlow</div>
+        <div class="nav-section">主菜单</div>
+        <div class="nav-item"><span class="icon">📊</span> 概览</div>
+        <div class="nav-item active"><span class="icon">📦</span> 商品管理</div>
+        <div class="nav-item"><span class="icon">🔄</span> 导入任务</div>
+        <div class="nav-section">配置</div>
+        <div class="nav-item"><span class="icon">🏪</span> 店铺管理</div>
+        <div class="nav-item"><span class="icon">💰</span> 定价规则</div>
+        <div class="nav-section">账户</div>
+        <div class="nav-item"><span class="icon">⚙️</span> 设置</div>
+      </div>
+
+      <!-- Main -->
+      <div class="dash-main">
+        <div class="dash-header">
+          <h2>📦 商品管理</h2>
+          <button class="btn-sm btn-primary-sm">+ 导入商品</button>
+        </div>
+
+        <!-- Stats -->
+        <div class="stat-cards">
+          <div class="stat-card">
+            <div class="stat-label">总商品数</div>
+            <div class="stat-value">127</div>
+            <div class="stat-sub">↑ 12 本周</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">已发布</div>
+            <div class="stat-value">89</div>
+            <div class="stat-sub">70.1% 发布率</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">草稿中</div>
+            <div class="stat-value">31</div>
+            <div class="stat-sub" style="color:#f59e0b;">待审核</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">处理中</div>
+            <div class="stat-value">7</div>
+            <div class="stat-sub" style="color:#3b82f6;">预计 3 分钟</div>
+          </div>
+        </div>
+
+        <!-- Table -->
+        <div class="table-container">
+          <div class="table-header">
+            <input class="search-input" placeholder="🔍 搜索商品...">
+            <select class="filter-select"><option>全部店铺</option><option>My Store</option><option>Store B</option></select>
+            <select class="filter-select"><option>全部状态</option><option>已发布</option><option>草稿</option><option>处理中</option><option>失败</option></select>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th style="width:52px;"></th>
+                <th>商品名称</th>
+                <th>店铺</th>
+                <th>状态</th>
+                <th>售价</th>
+                <th>时间</th>
+                <th style="width:60px;"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><div class="img-thumb">👕</div></td>
+                <td><strong>夏季新款纯棉T恤</strong><br><span style="font-size:11px;color:var(--text-muted)">男士短袖宽松休闲百搭圆领</span></td>
+                <td>My Store</td>
+                <td><span class="badge badge-draft">草稿</span></td>
+                <td><strong>$11.99</strong></td>
+                <td style="color:var(--text-muted);font-size:12px;">2 分钟前</td>
+                <td><span style="cursor:pointer">⋯</span></td>
+              </tr>
+              <tr>
+                <td><div class="img-thumb">👟</div></td>
+                <td><strong>透气跑步鞋 男女运动鞋</strong><br><span style="font-size:11px;color:var(--text-muted)">网面减震轻便</span></td>
+                <td>My Store</td>
+                <td><span class="badge badge-published">已发布</span></td>
+                <td><strong>$34.99</strong></td>
+                <td style="color:var(--text-muted);font-size:12px;">1 小时前</td>
+                <td><span style="cursor:pointer">⋯</span></td>
+              </tr>
+              <tr>
+                <td><div class="img-thumb">🧴</div></td>
+                <td><strong>保湿面霜 补水滋润</strong><br><span style="font-size:11px;color:var(--text-muted)">50ml 适合所有肤质</span></td>
+                <td>Store B</td>
+                <td><span class="badge badge-failed">失败</span></td>
+                <td><span style="color:var(--text-muted)">—</span></td>
+                <td style="color:var(--text-muted);font-size:12px;">昨天</td>
+                <td><span style="cursor:pointer">⋯</span></td>
+              </tr>
+              <tr>
+                <td><div class="img-thumb">📱</div></td>
+                <td><strong>iPhone 手机壳 硅胶防摔</strong><br><span style="font-size:11px;color:var(--text-muted)">全包边保护套</span></td>
+                <td>Store B</td>
+                <td><span class="badge badge-processing">处理中</span></td>
+                <td><span style="color:var(--text-muted)">—</span></td>
+                <td style="color:var(--text-muted);font-size:12px;">刚刚</td>
+                <td><span style="cursor:pointer">⋯</span></td>
+              </tr>
+            </tbody>
+          </table>
+          <div style="padding:12px 16px;text-align:center;font-size:12px;color:var(--text-muted);border-top:1px solid var(--border);">
+            显示 1-4 / 共 127 条 &nbsp;&nbsp; [◀ 上一页] <strong>1</strong> 2 3 [下一页 ▶]
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN 3: Task Detail -->
+  <div id="screen-task-detail" class="screen-container dashboard screen">
+    <div class="dash-layout">
+      <div class="dash-sidebar">
+        <div class="brand">⚡ DropShipFlow</div>
+        <div class="nav-section">主菜单</div>
+        <div class="nav-item"><span class="icon">📊</span> 概览</div>
+        <div class="nav-item"><span class="icon">📦</span> 商品管理</div>
+        <div class="nav-item active"><span class="icon">🔄</span> 导入任务</div>
+        <div class="nav-section">配置</div>
+        <div class="nav-item"><span class="icon">🏪</span> 店铺管理</div>
+        <div class="nav-item"><span class="icon">💰</span> 定价规则</div>
+        <div class="nav-section">账户</div>
+        <div class="nav-item"><span class="icon">⚙️</span> 设置</div>
+      </div>
+
+      <div class="dash-main">
+        <div style="margin-bottom:16px;">
+          <a href="#" style="color:var(--primary);font-size:13px;text-decoration:none;">← 返回任务列表</a>
+        </div>
+
+        <div class="dash-header" style="margin-bottom:16px;">
+          <div>
+            <h2>任务 #IMP-20260609-0042</h2>
+            <span style="font-size:12px;color:var(--text-muted);">来源: detail.1688.com/offer/123456789.html</span>
+          </div>
+          <span class="badge badge-processing" style="font-size:13px;padding:4px 14px;">🔵 处理中 45%</span>
+        </div>
+
+        <!-- Progress -->
+        <div class="table-container" style="margin-bottom:20px;">
+          <div style="padding:16px;border-bottom:1px solid var(--border);font-weight:600;font-size:14px;">📋 处理进度</div>
+          <div style="padding:16px;">
+            <div class="progress-steps">
+              <div class="progress-step done">
+                <span class="step-icon">✅</span>
+                <span class="step-name">下载素材</span>
+                <span class="step-status">完成 (8/8 图片) · 5s</span>
+              </div>
+              <div class="progress-step done">
+                <span class="step-icon">✅</span>
+                <span class="step-name">AI 翻译</span>
+                <span class="step-status">完成 · 22s</span>
+              </div>
+              <div class="progress-step active">
+                <span class="step-icon">🔄</span>
+                <span class="step-name">图像处理</span>
+                <span class="step-status">处理中 (4/8) · 1m 30s</span>
+              </div>
+              <div style="padding-left:34px;font-size:11px;color:var(--text-muted);margin-bottom:4px;">
+                ├─ 去水印: <span style="color:var(--success);">已完成</span> ·
+                ├─ 白底图: <span style="color:var(--success);">已完成</span> ·
+                └─ 营销主图: <span style="color:var(--text-muted);">等待中</span>
+              </div>
+              <div class="progress-step pending">
+                <span class="step-icon">⏳</span>
+                <span class="step-name">定价计算</span>
+                <span class="step-status">等待中</span>
+              </div>
+              <div class="progress-step pending">
+                <span class="step-icon">⏳</span>
+                <span class="step-name">同步到 Shopify</span>
+                <span class="step-status">等待中</span>
+              </div>
+            </div>
+            <div class="progress-container">
+              <div class="progress-bar">
+                <div class="progress-bar-fill" style="width:45%;"></div>
+              </div>
+              <div style="text-align:right;font-size:14px;font-weight:700;color:var(--primary);margin-top:4px;">45%</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Translation Preview -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;">
+          <div class="table-container">
+            <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:13px;">🇨🇳 原始数据</div>
+            <div style="padding:12px 16px;font-size:12px;line-height:1.6;">
+              <strong>标题:</strong> 夏季新款纯棉T恤 男士短袖宽松休闲百搭圆领<br>
+              <strong>描述:</strong> 100%纯棉面料，透气舒适...<br>
+              <strong>SKU:</strong> 12 variants (S/M/L/XL × 红/蓝/黑)<br>
+              <strong>图片:</strong> 8 张
+            </div>
+          </div>
+          <div class="table-container">
+            <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:13px;">🇺🇸 翻译结果</div>
+            <div style="padding:12px 16px;font-size:12px;line-height:1.6;">
+              <strong>Title:</strong> Summer Cotton T-Shirt Men's Short Sleeve Casual Loose Fit<br>
+              <strong style="color:var(--success);">✓ 术语库匹配: 3处</strong><br>
+              <strong style="color:var(--success);">✓ 标题长度: 58 chars (≤70)</strong><br>
+              <strong>Description:</strong> Premium 100% cotton fabric...
+            </div>
+          </div>
+        </div>
+
+        <!-- Image Comparison -->
+        <div class="table-container" style="margin-bottom:20px;">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:13px;">🖼️ 图片对比</div>
+          <div style="padding:16px;display:flex;gap:12px;overflow-x:auto;">
+            <div style="text-align:center;min-width:120px;">
+              <div style="width:100px;height:100px;background:#f1f5f9;border-radius:8px;margin:0 auto 6px;display:flex;align-items:center;justify-content:center;font-size:30px;border:2px solid #fbbf24;">👕</div>
+              <span style="font-size:10px;color:var(--text-muted);">原图(带水印)</span>
+            </div>
+            <div style="font-size:24px;display:flex;align-items:center;color:var(--text-muted);">→</div>
+            <div style="text-align:center;min-width:120px;">
+              <div style="width:100px;height:100px;background:#f1f5f9;border-radius:8px;margin:0 auto 6px;display:flex;align-items:center;justify-content:center;font-size:30px;border:2px solid var(--success);">👕</div>
+              <span style="font-size:10px;color:var(--success);">去水印 ✓</span>
+            </div>
+            <div style="font-size:24px;display:flex;align-items:center;color:var(--text-muted);">→</div>
+            <div style="text-align:center;min-width:120px;">
+              <div style="width:100px;height:100px;background:white;border-radius:8px;margin:0 auto 6px;display:flex;align-items:center;justify-content:center;font-size:30px;border:2px solid var(--success);">👕</div>
+              <span style="font-size:10px;color:var(--success);">白底主图 ✓</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:12px;justify-content:flex-end;">
+          <button class="btn-sm" style="background:#f1f5f9;color:var(--text-secondary);">取消任务</button>
+          <button class="btn-sm btn-primary-sm">重新处理</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN 4: Pricing Rules -->
+  <div id="screen-pricing" class="screen-container dashboard screen">
+    <div class="dash-layout">
+      <div class="dash-sidebar">
+        <div class="brand">⚡ DropShipFlow</div>
+        <div class="nav-section">主菜单</div>
+        <div class="nav-item"><span class="icon">📊</span> 概览</div>
+        <div class="nav-item"><span class="icon">📦</span> 商品管理</div>
+        <div class="nav-item"><span class="icon">🔄</span> 导入任务</div>
+        <div class="nav-section">配置</div>
+        <div class="nav-item"><span class="icon">🏪</span> 店铺管理</div>
+        <div class="nav-item active"><span class="icon">💰</span> 定价规则</div>
+        <div class="nav-section">账户</div>
+        <div class="nav-item"><span class="icon">⚙️</span> 设置</div>
+      </div>
+
+      <div class="dash-main">
+        <div class="dash-header">
+          <h2>💰 定价规则</h2>
+          <button class="btn-sm btn-primary-sm">+ 新建规则</button>
+        </div>
+
+        <div class="rule-editor">
+          <h3>
+            <span style="background:var(--primary-light);color:var(--primary);padding:2px 8px;border-radius:4px;font-size:11px;">规则 1</span>
+            家居品类低客单价
+            <span class="badge badge-published" style="margin-left:auto;">🟢 已启用</span>
+          </h3>
+
+          <div class="form-group">
+            <label>规则名称</label>
+            <input value="家居品类低客单价" placeholder="输入规则名称">
+          </div>
+          <div class="form-group">
+            <label>优先级 (数字越小越优先)</label>
+            <input value="1" type="number" min="1" max="99">
+          </div>
+
+          <div style="font-weight:600;font-size:13px;margin:16px 0 8px;color:var(--text);">匹配条件 (AND)</div>
+          <div style="background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:16px;">
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:12px;">
+              <span>商品价格区间</span>
+              <select style="width:auto;padding:4px 8px;font-size:12px;"><option>≥</option><option>≤</option><option>=</option></select>
+              <input value="0" style="width:60px;padding:4px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px;">
+              <span>且 ≤</span>
+              <input value="50" style="width:60px;padding:4px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px;">
+              <span>¥ CNY</span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;font-size:12px;">
+              <span>商品类目包含</span>
+              <input value="家居" style="width:120px;padding:4px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px;">
+            </div>
+            <button style="background:none;border:none;color:var(--primary);font-size:11px;cursor:pointer;margin-top:4px;">+ 添加条件</button>
+          </div>
+
+          <div style="font-weight:600;font-size:13px;margin:16px 0 8px;color:var(--text);">定价公式</div>
+          <div style="background:white;border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:16px;">
+            <div class="form-group">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <label style="margin:0;">汇率</label>
+                <span style="font-size:13px;font-weight:600;">1 USD = 7.25 CNY</span>
+                <button style="background:none;border:none;font-size:11px;cursor:pointer;color:var(--primary);">🔄 刷新</button>
+              </div>
+            </div>
+
+            <label style="font-size:12px;font-weight:600;color:var(--text-secondary);">加价倍率 (阶梯)</label>
+            <table class="tier-table" style="margin-bottom:8px;">
+              <thead><tr><th>成本区间 (¥)</th><th>倍率</th><th>示例 (¥25)</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td><input value="0"> - <input value="50"></td>
+                  <td><input value="3.5" type="number" step="0.1"></td>
+                  <td style="color:var(--primary);">$12.07</td>
+                </tr>
+                <tr>
+                  <td><input value="50"> - <input value="200"></td>
+                  <td><input value="2.8" type="number" step="0.1"></td>
+                  <td style="color:var(--text-muted);">—</td>
+                </tr>
+                <tr>
+                  <td><input value="200"> - <input value="99999"></td>
+                  <td><input value="2.2" type="number" step="0.1"></td>
+                  <td style="color:var(--text-muted);">—</td>
+                </tr>
+              </tbody>
+            </table>
+            <button style="background:none;border:none;color:var(--primary);font-size:11px;cursor:pointer;">+ 添加阶梯</button>
+
+            <div class="form-group" style="margin-top:12px;">
+              <label>价格尾数处理</label>
+              <select style="width:150px;">
+                <option>.99 (例: $12.99)</option>
+                <option>.95 (例: $12.95)</option>
+                <option>.00 (例: $13.00)</option>
+                <option>无 (保留两位小数)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>划线价倍率 (Compare-at Price = 售价 × 此倍率)</label>
+              <input value="1.5" type="number" step="0.1" style="width:100px;">
+            </div>
+          </div>
+
+          <!-- Calculator -->
+          <div style="font-weight:600;font-size:13px;margin:16px 0 8px;color:var(--text);">🧪 测试计算</div>
+          <div class="calculator">
+            <div class="calc-row">
+              <span>输入成本:</span>
+              <input value="25" style="width:60px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;text-align:right;"> <span>¥</span>
+            </div>
+            <div class="calc-row" style="margin-top:8px;">
+              <span>🇨🇳 1688 价格:</span>
+              <span>¥25.00</span>
+            </div>
+            <div class="calc-row">
+              <span>💱 汇率 (CNY→USD):</span>
+              <span>÷ 7.25</span>
+            </div>
+            <div class="calc-row">
+              <span>📈 加价倍率:</span>
+              <span>× 3.5</span>
+            </div>
+            <div class="calc-row">
+              <span>🔢 尾数处理:</span>
+              <span>.99</span>
+            </div>
+            <div class="calc-result">
+              💰 售价: $12.99 &nbsp;&nbsp;|&nbsp;&nbsp; 📊 利润: $9.54 &nbsp;&nbsp;|&nbsp;&nbsp; 🏷️ 划线价: $19.49
+            </div>
+          </div>
+
+          <div style="display:flex;gap:12px;justify-content:flex-end;margin-top:20px;">
+            <button class="btn-sm" style="background:#f1f5f9;color:var(--text-secondary);">取消</button>
+            <button class="btn-sm btn-primary-sm">💾 保存规则</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN 5: Super Admin Dashboard -->
+  <div id="screen-super-admin" class="screen-container dashboard screen">
+    <div class="dash-layout">
+      <div class="dash-sidebar">
+        <div class="brand">👑 DropShipFlow</div>
+        <div class="nav-section">全局管理</div>
+        <div class="nav-item active"><span class="icon">📊</span> 团队总览</div>
+        <div class="nav-item"><span class="icon">🟢</span> 在线监控</div>
+        <div class="nav-item"><span class="icon">💳</span> 订阅套餐</div>
+        <div class="nav-item"><span class="icon">📏</span> 配额规则</div>
+        <div class="nav-item"><span class="icon">🤖</span> AI 提供商</div>
+        <div class="nav-item"><span class="icon">👥</span> 用户管理</div>
+        <div class="nav-item"><span class="icon">📋</span> 审计日志</div>
+        <div class="nav-section">账户</div>
+        <div class="nav-item"><span class="icon">⚙️</span> 全局设置</div>
+      </div>
+
+      <div class="dash-main">
+        <div class="dash-header">
+          <h2>👑 超级管理员控制台</h2>
+          <span style="font-size:12px;color:var(--text-muted);">admin@dropshipflow.com</span>
+        </div>
+
+        <!-- Global Stats -->
+        <div class="stat-cards">
+          <div class="stat-card">
+            <div class="stat-label">团队总数</div>
+            <div class="stat-value">3</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">总用户数</div>
+            <div class="stat-value">27</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">总商品数</div>
+            <div class="stat-value">606</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">MRR</div>
+            <div class="stat-value">$2,370</div>
+          </div>
+        </div>
+
+        <!-- Teams List -->
+        <div class="table-container" style="margin-bottom:16px;">
+          <div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+            <span style="font-weight:600;font-size:14px;">所有团队</span>
+            <button class="btn-sm btn-primary-sm">+ 创建新团队</button>
+          </div>
+
+          <!-- Team Card A -->
+          <div style="padding:16px;border-bottom:1px solid var(--border);">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <div>
+                <span style="font-weight:700;font-size:15px;">团队 A</span>
+                <span class="badge badge-published" style="margin-left:8px;">Pro</span>
+                <span style="font-size:12px;color:var(--text-muted);margin-left:8px;">8人 · 3店铺</span>
+              </div>
+              <div style="display:flex;gap:8px;">
+                <button class="btn-sm btn-primary-sm" onclick="enterTeam('团队 A', 'Pro')">进入团队</button>
+                <button class="btn-sm" style="background:#f1f5f9;color:var(--text-secondary);">管理</button>
+              </div>
+            </div>
+            <div style="display:flex;gap:24px;font-size:12px;color:var(--text-secondary);">
+              <span>管理者: wang@example.com</span>
+              <span>商品: 127</span>
+              <span>本月导入: 45/200</span>
+            </div>
+          </div>
+
+          <!-- Team Card B -->
+          <div style="padding:16px;border-bottom:1px solid var(--border);">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <div>
+                <span style="font-weight:700;font-size:15px;">团队 B</span>
+                <span class="badge badge-draft" style="margin-left:8px;">Free</span>
+                <span style="font-size:12px;color:var(--text-muted);margin-left:8px;">2人 · 1店铺</span>
+              </div>
+              <div style="display:flex;gap:8px;">
+                <button class="btn-sm btn-primary-sm" onclick="enterTeam('团队 B', 'Free')">进入团队</button>
+                <button class="btn-sm" style="background:#f1f5f9;color:var(--text-secondary);">管理</button>
+              </div>
+            </div>
+            <div style="display:flex;gap:24px;font-size:12px;color:var(--text-secondary);">
+              <span>管理者: li@example.com</span>
+              <span>商品: 23</span>
+              <span>本月导入: 8/10</span>
+            </div>
+          </div>
+
+          <!-- Team Card C -->
+          <div style="padding:16px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <div>
+                <span style="font-weight:700;font-size:15px;">团队 C</span>
+                <span class="badge badge-processing" style="margin-left:8px;">Business</span>
+                <span style="font-size:12px;color:var(--text-muted);margin-left:8px;">15人 · 8店铺</span>
+              </div>
+              <div style="display:flex;gap:8px;">
+                <button class="btn-sm btn-primary-sm" onclick="enterTeam('团队 C', 'Business')">进入团队</button>
+                <button class="btn-sm" style="background:#f1f5f9;color:var(--text-secondary);">管理</button>
+              </div>
+            </div>
+            <div style="display:flex;gap:24px;font-size:12px;color:var(--text-secondary);">
+              <span>管理者: zhang@example.com</span>
+              <span>商品: 456</span>
+              <span>本月导入: 234/1000</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="font-size:11px;color:var(--text-muted);margin-top:12px;">
+          💡 点击「进入团队」以该团队视角操作管理后台，Sidebar 将标记当前团队名称。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN 6: Audit Log -->
+  <div id="screen-audit-log" class="screen-container dashboard screen">
+    <div class="dash-layout">
+      <div class="dash-sidebar">
+        <div class="brand">⚡ DropShipFlow</div>
+        <div class="nav-section">主菜单</div>
+        <div class="nav-item"><span class="icon">📊</span> 概览</div>
+        <div class="nav-item"><span class="icon">📦</span> 商品管理</div>
+        <div class="nav-item"><span class="icon">🔄</span> 导入任务</div>
+        <div class="nav-section">安全</div>
+        <div class="nav-item active"><span class="icon">📋</span> 审计日志</div>
+        <div class="nav-section">账户</div>
+        <div class="nav-item"><span class="icon">⚙️</span> 设置</div>
+      </div>
+      <div class="dash-main">
+        <div class="dash-header">
+          <h2>📋 审计日志</h2>
+          <span style="font-size:12px;color:var(--text-muted);">共 1,247 条 · 今日 43 条</span>
+        </div>
+        <div class="table-container" style="margin-bottom:16px;">
+          <div style="padding:12px 16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+            <select class="filter-select"><option>全部团队</option><option>团队 A (Pro)</option><option>团队 B (Free)</option></select>
+            <select class="filter-select"><option>全部操作类型</option><option>登录/登出</option><option>商品操作</option><option>店铺操作</option></select>
+            <input type="date" class="search-input" style="width:130px;" value="2026-06-01">
+            <span style="font-size:12px;color:var(--text-muted);">→</span>
+            <input type="date" class="search-input" style="width:130px;" value="2026-06-09">
+            <input class="search-input" placeholder="🔍 搜索..." style="width:160px;">
+          </div>
+        </div>
+        <div class="table-container">
+          <table>
+            <thead><tr><th style="width:70px;">时间</th><th style="width:90px;">操作人</th><th style="width:120px;">操作</th><th style="width:130px;">对象</th><th>变更详情</th></tr></thead>
+            <tbody>
+              <tr><td style="font-size:12px;">10:32</td><td><span style="font-size:12px;font-weight:600;">wang</span></td><td><span class="badge" style="background:var(--info-light);color:#1e40af;">🔑 login</span></td><td style="font-size:12px;">wang@example.com</td><td style="font-size:11px;color:var(--text-secondary);">IP: 192.168.1.1 · Chrome/macOS</td></tr>
+              <tr><td style="font-size:12px;">10:35</td><td><span style="font-size:12px;font-weight:600;">wang</span></td><td><span class="badge badge-draft">✏️ product.update</span></td><td style="font-size:12px;">夏季纯棉T恤</td><td style="font-size:11px;">title: "夏季..."→"Summer Cotton..." <span style="color:var(--primary);cursor:pointer;">[详情]</span></td></tr>
+              <tr><td style="font-size:12px;">10:38</td><td><span style="font-size:12px;font-weight:600;">wang</span></td><td><span class="badge badge-published">🚀 product.publish</span></td><td style="font-size:12px;">夏季纯棉T恤</td><td style="font-size:11px;">draft → <span style="color:var(--success);">published</span></td></tr>
+              <tr><td style="font-size:12px;">09:15</td><td><span style="font-size:12px;font-weight:600;">li</span></td><td><span class="badge" style="background:var(--success-light);color:#065f46;">🏪 shop.connect</span></td><td style="font-size:12px;">Store B</td><td style="font-size:11px;color:var(--text-secondary);">store-b.myshopify.com</td></tr>
+              <tr><td style="font-size:12px;">08:42</td><td><span style="font-size:12px;font-weight:600;color:#8b5cf6;">admin 👑</span></td><td><span class="badge" style="background:var(--primary-light);color:var(--primary);">⬆️ team.upgrade</span></td><td style="font-size:12px;">团队 B</td><td style="font-size:11px;">Free → <span style="color:#065f46;">Pro</span></td></tr>
+              <tr><td style="font-size:12px;">08:30</td><td><span style="font-size:11px;color:var(--text-muted);">system</span></td><td><span class="badge" style="background:#f1f5f9;color:#64748b;">🧹 cleanup</span></td><td style="font-size:12px;">audit_logs</td><td style="font-size:11px;color:var(--text-secondary);">删除 342 条过期日志</td></tr>
+            </tbody>
+          </table>
+          <div style="padding:12px 16px;text-align:center;font-size:12px;color:var(--text-muted);border-top:1px solid var(--border);">显示 1-6 / 共 1,247 条 &nbsp; [◀ 上一页] <strong>1</strong> 2 3 [下一页 ▶]</div>
+        </div>
+        <div style="margin-top:12px;padding:10px 14px;background:var(--info-light);border-radius:8px;font-size:11px;color:#1e40af;">📌 <strong>权限:</strong> 👑超管看全部 | 🛡️管理者仅见本团队 | 👤成员无此页面</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Toast Notification (hidden by default) -->
+<div id="toast" class="toast hidden">
+  <div class="toast-icon">✅</div>
+  <div>
+    <div class="toast-title">商品导入成功！</div>
+    <div class="toast-body">"夏季新款纯棉T恤" 已推送至 Shopify 草稿箱</div>
+    <div class="toast-actions">
+      <button class="toast-btn primary" onclick="document.getElementById('toast').classList.add('hidden')">查看详情</button>
+      <button class="toast-btn secondary" onclick="document.getElementById('toast').classList.add('hidden')">知道了</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function showScreen(name) {
+  // Hide all screens
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.screen-tab').forEach(t => t.classList.remove('active'));
+
+  // Show selected screen
+  const screenMap = {
+    'popup': 'screen-popup',
+    'super-admin': 'screen-super-admin',
+    'dashboard': 'screen-dashboard',
+    'task-detail': 'screen-task-detail',
+    'pricing': 'screen-pricing',
+    'audit-log': 'screen-audit-log'
+  };
+  document.getElementById(screenMap[name]).classList.add('active');
+
+  // Update tab
+  const tabLabels = {
+    'popup': 'Popup',
+    'super-admin': '超管控制台',
+    'dashboard': '管理后台',
+    'task-detail': '任务详情',
+    'pricing': '定价规则',
+    'audit-log': '审计日志'
+  };
+  document.querySelectorAll('.screen-tab').forEach(t => {
+    if (t.textContent.includes(tabLabels[name])) {
+      t.classList.add('active');
+    }
+  });
+}
+
+function simulateImport() {
+  const toast = document.getElementById('toast');
+  toast.classList.remove('hidden');
+  setTimeout(() => { toast.classList.add('hidden'); }, 5000);
+}
+
+let authState = 'logged-out'; // 'logged-out' | 'logged-in'
+
+function toggleAuth() {
+  const outEl = document.getElementById('popup-logged-out');
+  const inEl = document.getElementById('popup-logged-in');
+  const btn = document.getElementById('auth-toggle-btn');
+
+  if (authState === 'logged-out') {
+    outEl.style.display = 'none';
+    inEl.style.display = 'block';
+    btn.textContent = '🔒';
+    btn.title = '当前: 已登录 — 点击模拟退出';
+    authState = 'logged-in';
+  } else {
+    inEl.style.display = 'none';
+    outEl.style.display = 'flex';
+    btn.textContent = '🔓';
+    btn.title = '当前: 未登录 — 点击模拟登录';
+    authState = 'logged-out';
+  }
+}
+
+function enterTeam(teamName, plan) {
+  // Simulate switching into a team's view
+  const toast = document.getElementById('toast');
+  toast.querySelector('.toast-title').textContent = `已进入 ${teamName}`;
+  toast.querySelector('.toast-body').textContent = `当前团队: ${teamName} (${plan}) — 你可以以该团队视角操作所有数据`;
+  toast.classList.remove('hidden');
+  setTimeout(() => { toast.classList.add('hidden'); }, 3000);
+  
+  // Switch to dashboard view to show the effect
+  showScreen('dashboard');
+}
+</script>
+
+</body>
+</html>

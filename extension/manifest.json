@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "DropShipFlow — 1688 to Shopify",
+  "version": "0.2.0",
+  "description": "1688 商品一键抓取到 DropShipFlow 选品池",
+  "permissions": ["activeTab", "storage", "scripting", "sidePanel", "tabs"],
+  "host_permissions": [
+    "*://detail.1688.com/*",
+    "http://localhost:8000/*",
+    "http://localhost:3000/*",
+    "http://127.0.0.1:8000/*",
+    "http://127.0.0.1:3000/*"
+  ],
+  "action": {
+    "default_title": "DropShipFlow — 点击打开侧边栏"
+  },
+  "side_panel": {
+    "default_path": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [{
+    "matches": ["*://detail.1688.com/offer/*.html"],
+    "js": ["content.js"],
+    "run_at": "document_idle"
+  }],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
