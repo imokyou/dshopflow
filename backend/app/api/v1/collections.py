@@ -5,7 +5,7 @@ from sqlalchemy import select, func
 from pydantic import BaseModel
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models import User, Collection, Product
+from app.models import User, Collection, Product, iso_utc
 from app.core.permissions import require, Permission
 
 router = APIRouter(prefix="/collections", tags=["collections"])
@@ -25,7 +25,7 @@ def _slug(s: str) -> str:
 
 def _ser(c: Collection, count: int | None = None) -> dict:
     d = {"id": c.id, "title": c.title, "handle": c.handle, "body_html": c.body_html,
-         "created_at": (c.created_at.isoformat() + "+00:00") if c.created_at else None}
+         "created_at": (iso_utc(c.created_at)) if c.created_at else None}
     if count is not None:
         d["product_count"] = count
     return d

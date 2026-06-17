@@ -199,5 +199,8 @@ def _sync_ensure(conn):
 
 
 async def ensure_schema():
+    # SQLite 专用增量迁移（PRAGMA/sqlite_master/表重建）。Postgres 等由 create_all 建表，跳过。
+    if engine.dialect.name != "sqlite":
+        return
     async with engine.begin() as conn:
         await conn.run_sync(_sync_ensure)

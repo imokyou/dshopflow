@@ -9,7 +9,7 @@ from sqlalchemy.orm import joinedload
 from pydantic import BaseModel
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models import User, ProductPool, ProductDetail, ProductTranslation, TaskLog, Product
+from app.models import User, ProductPool, ProductDetail, ProductTranslation, TaskLog, Product, iso_utc
 from app.core.permissions import require, Permission
 from app.core import worker
 
@@ -217,8 +217,8 @@ async def list_pool(
                 "image_count": r.image_count, "final_price": r.final_price, "compare_at_price": r.compare_at_price,
                 "pricing_rule_name": r.pricing_rule_name, "status": r.status, "error_message": r.error_message,
                 "transferred": r.id in transferred_ids, "spu": spu_by_pool.get(r.id),
-                "created_at": (r.created_at.isoformat() + "+00:00") if r.created_at else None,
-                "updated_at": (r.updated_at.isoformat() + "+00:00") if r.updated_at else None,
+                "created_at": (iso_utc(r.created_at)) if r.created_at else None,
+                "updated_at": (iso_utc(r.updated_at)) if r.updated_at else None,
             }
             for r in rows
         ],
@@ -244,7 +244,7 @@ async def get_pool_detail(
     if current_user.role != "super_admin" and pool.team_id != current_user.team_id:
         raise HTTPException(status_code=403)
 
-    def ts(dt): return (dt.isoformat() + "+00:00") if dt else None
+    def ts(dt): return (iso_utc(dt)) if dt else None
 
     # 已转入商品的 SPU（取最新转入的一条）
     transferred_product = await db.scalar(
@@ -631,9 +631,9 @@ async def get_task_logs(
             "id": l.id, "task_type": l.task_type, "status": l.status, "language": l.language,
             "image_index": l.image_index, "message": l.message, "result": l.result,
             "retry_count": l.retry_count,
-            "started_at": (l.started_at.isoformat() + "+00:00") if l.started_at else None,
-            "completed_at": (l.completed_at.isoformat() + "+00:00") if l.completed_at else None,
-            "created_at": (l.created_at.isoformat() + "+00:00") if l.created_at else None,
+            "started_at": (iso_utc(l.started_at)) if l.started_at else None,
+            "completed_at": (iso_utc(l.completed_at)) if l.completed_at else None,
+            "created_at": (iso_utc(l.created_at)) if l.created_at else None,
         }
         for l in logs
     ]

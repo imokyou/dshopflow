@@ -13,6 +13,16 @@ def utcnow():
     return datetime.now(timezone.utc)
 
 
+def iso_utc(dt):
+    """把 DB 时间统一序列化成带 UTC 偏移的 ISO 字符串（跨库安全）。
+    SQLite 读出是 naive（视为 UTC，补 +00:00）；Postgres 读出是 aware（已带偏移，避免双后缀）。"""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.isoformat() + "+00:00"
+    return dt.astimezone(timezone.utc).isoformat()
+
+
 def new_uuid():
     return str(uuid.uuid4())
 

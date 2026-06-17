@@ -4,7 +4,7 @@ from sqlalchemy import select
 from pydantic import BaseModel
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models import User, SpuRule
+from app.models import User, SpuRule, iso_utc
 from app.core.permissions import require, Permission
 
 router = APIRouter(prefix="/spu-rules", tags=["spu-rules"])
@@ -18,7 +18,7 @@ class SpuRuleIn(BaseModel):
 
 def _ser(r: SpuRule) -> dict:
     return {"id": r.id, "name": r.name, "code": r.code, "remark": r.remark,
-            "created_at": (r.created_at.isoformat() + "+00:00") if r.created_at else None}
+            "created_at": (iso_utc(r.created_at)) if r.created_at else None}
 
 
 @router.get("")

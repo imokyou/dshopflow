@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import joinedload
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models import User, Product, Shop, Collection, ProductPool, PricingRule, TransferJob, SpuRule, Material
+from app.models import User, Product, Shop, Collection, ProductPool, PricingRule, TransferJob, SpuRule, Material, iso_utc
 from app.core.permissions import require, Permission
 from app.services.shopify_product_service import sync_to_shopify
 from app.services.translate_service import translate_product, translate_terms
@@ -111,9 +111,9 @@ def _summary(p: Product) -> dict:
         "price": p.price, "image": (imgs[0].get("src") if imgs and isinstance(imgs[0], dict) else None),
         "image_count": len(imgs), "variant_count": len(p.variants or []),
         "inventory": _inventory(p.variants), "shopify_product_id": p.shopify_product_id,
-        "shopify_synced_at": (p.shopify_synced_at.isoformat() + "+00:00") if p.shopify_synced_at else None,
-        "created_at": (p.created_at.isoformat() + "+00:00") if p.created_at else None,
-        "updated_at": (p.updated_at.isoformat() + "+00:00") if p.updated_at else None,
+        "shopify_synced_at": (iso_utc(p.shopify_synced_at)) if p.shopify_synced_at else None,
+        "created_at": (iso_utc(p.created_at)) if p.created_at else None,
+        "updated_at": (iso_utc(p.updated_at)) if p.updated_at else None,
     }
 
 
@@ -126,9 +126,9 @@ def _detail(p: Product) -> dict:
         "images": p.images or [], "collection_ids": p.collection_ids or [],
         "seo_title": p.seo_title, "seo_description": p.seo_description, "status": p.status,
         "shop_id": p.shop_id, "shopify_product_id": p.shopify_product_id, "shopify_handle": p.shopify_handle,
-        "shopify_synced_at": (p.shopify_synced_at.isoformat() + "+00:00") if p.shopify_synced_at else None,
-        "created_at": (p.created_at.isoformat() + "+00:00") if p.created_at else None,
-        "updated_at": (p.updated_at.isoformat() + "+00:00") if p.updated_at else None,
+        "shopify_synced_at": (iso_utc(p.shopify_synced_at)) if p.shopify_synced_at else None,
+        "created_at": (iso_utc(p.created_at)) if p.created_at else None,
+        "updated_at": (iso_utc(p.updated_at)) if p.updated_at else None,
     }
 
 
@@ -208,8 +208,8 @@ async def list_transfer_jobs(
     return {
         "items": [{
             "id": j.id, "pool_title": j.pool_title, "status": j.status, "product_id": j.product_id,
-            "error": j.error, "created_at": (j.created_at.isoformat() + "+00:00") if j.created_at else None,
-            "completed_at": (j.completed_at.isoformat() + "+00:00") if j.completed_at else None,
+            "error": j.error, "created_at": (iso_utc(j.created_at)) if j.created_at else None,
+            "completed_at": (iso_utc(j.completed_at)) if j.completed_at else None,
         } for j in rows],
         "counts": counts,
     }

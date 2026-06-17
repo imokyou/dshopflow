@@ -25,7 +25,12 @@ app.include_router(api_router, prefix="/api/v1")
 
 @app.on_event("startup")
 async def _startup_migrate():
-    # 幂等迁移：商品管理模块（products 扩展 + collections），不影响选品池
+    # 跨库建表：以 ORM 模型为准建缺失的表（SQLite/Postgres 通用、幂等，新库一步到位）
+    import app.models  # noqa: F401 确保所有表注册到 Base.metadata
+    from app.database import engine, Base
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    # SQLite 既有 dev 库的增量补列（内部已 guard：仅 sqlite 跑，Postgres 直接跳过）
     from app.db_migrate import ensure_schema
     await ensure_schema()
     # 恢复中断的转入队列任务

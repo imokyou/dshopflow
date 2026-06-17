@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models import User, Material
+from app.models import User, Material, iso_utc
 from app.core.permissions import require, Permission
 from app.core import worker
 
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/materials", tags=["materials"])
 
 
 def _ts(dt):
-    return (dt.isoformat() + "+00:00") if dt else None
+    return (iso_utc(dt)) if dt else None
 
 
 def _item(m: Material) -> dict:

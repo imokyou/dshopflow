@@ -4,7 +4,7 @@ from sqlalchemy import select
 from pydantic import BaseModel
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models import User, PricingRule
+from app.models import User, PricingRule, iso_utc
 from app.core.permissions import require, Permission, get_current_team_or_raise
 
 router = APIRouter(prefix="/pricing-rules", tags=["pricing"])
@@ -65,7 +65,7 @@ async def list_rules(
         "conditions": r.conditions or [],
         "formula": r.formula or {},
         "is_active": r.is_active,
-        "created_at": (r.created_at.isoformat() + "+00:00") if r.created_at else None,
+        "created_at": (iso_utc(r.created_at)) if r.created_at else None,
     } for r in rules]
 
 

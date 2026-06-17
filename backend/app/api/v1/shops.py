@@ -10,7 +10,7 @@ from sqlalchemy import select
 from pydantic import BaseModel
 from app.database import get_db, async_session
 from app.dependencies import get_current_user
-from app.models import User, Shop, Team
+from app.models import User, Shop, Team, iso_utc
 from app.core.permissions import require, Permission, get_current_team_or_raise, QuotaChecker
 from app.core.crypto import encrypt_secret, decrypt_secret
 from app.integrations.shopify import oauth
@@ -262,7 +262,7 @@ def _persist_conn(shop: Shop, r: dict) -> None:
 def _conn_fields(s: Shop) -> dict:
     return {
         "conn_status": s.conn_status or "unknown",
-        "conn_checked_at": s.conn_checked_at.isoformat() + "+00:00" if s.conn_checked_at else None,
+        "conn_checked_at": iso_utc(s.conn_checked_at) if s.conn_checked_at else None,
         "conn_error": s.conn_error,
     }
 
@@ -322,6 +322,6 @@ async def list_shops(
         "shop_domain": s.shop_domain, "shop_name": s.shop_name,
         "alias": s.alias, "custom_domain": s.custom_domain, "tags": s.tags,
         "is_active": s.is_active,
-        "created_at": s.created_at.isoformat() + "+00:00" if s.created_at else None,
+        "created_at": iso_utc(s.created_at) if s.created_at else None,
         **_conn_fields(s),
     } for s in shops]

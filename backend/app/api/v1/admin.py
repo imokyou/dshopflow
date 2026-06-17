@@ -5,7 +5,7 @@ from sqlalchemy import select
 from pydantic import BaseModel
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models import User, SubscriptionPlan, QuotaRule, AIProvider, AuditLog, Team
+from app.models import User, SubscriptionPlan, QuotaRule, AIProvider, AuditLog, Team, iso_utc
 from app.core.permissions import require, Permission
 from app.core.audit import get_active_sessions, force_logout_user, log_audit
 from app.core.crypto import encrypt_secret, decrypt_secret
@@ -80,8 +80,8 @@ async def get_me(
             result["members"] = [{
                 "id": m.id, "email": m.email, "name": m.name, "role": m.role,
                 "is_active": m.is_active,
-                "created_at": (m.created_at.isoformat() + "+00:00") if m.created_at else None,
-                "updated_at": (m.updated_at.isoformat() + "+00:00") if m.updated_at else None,
+                "created_at": (iso_utc(m.created_at)) if m.created_at else None,
+                "updated_at": (iso_utc(m.updated_at)) if m.updated_at else None,
             } for m in members]
     return result
 
@@ -414,7 +414,7 @@ async def list_audit_logs(
         "entity_label": l.entity_label,
         "old_values": l.old_values,
         "new_values": l.new_values,
-        "created_at": (l.created_at.isoformat() + "+00:00") if l.created_at else None,
+        "created_at": (iso_utc(l.created_at)) if l.created_at else None,
     } for l in logs]
 
 
@@ -501,8 +501,8 @@ async def list_team_members(
         "name": m.name,
         "role": m.role,
         "is_active": m.is_active,
-        "created_at": (m.created_at.isoformat() + "+00:00") if m.created_at else None,
-        "updated_at": (m.updated_at.isoformat() + "+00:00") if m.updated_at else None,
+        "created_at": (iso_utc(m.created_at)) if m.created_at else None,
+        "updated_at": (iso_utc(m.updated_at)) if m.updated_at else None,
     } for m in members]
 
 
