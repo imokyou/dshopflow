@@ -1,38 +1,20 @@
 // DropShipFlow Background Service Worker
-const API = "http://localhost:8000/api/v1"
+// 注：不用 importScripts（SW 中加载同级脚本不稳定，曾报 NetworkError）。
+// background 只需 getApiUrl()，故内联一份精简实现，自包含。
+const DEFAULT_API_BASE = "http://localhost:8000"
+async function getApiUrl() {
+  const { apiBase } = await chrome.storage.local.get("apiBase")
+  const base = (String(apiBase || "").trim().replace(/\/+$/, "")) || DEFAULT_API_BASE
+  return base + "/api/v1"
+}
 
 // 点击工具栏图标 → 打开右侧侧边栏
 chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
   .catch(err => console.warn("sidePanel setPanelBehavior failed:", err))
 
-// Receive auth from web login page (external message — deprecated, kept for compat)
-chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
-  if (msg.type === "AUTH_SUCCESS") {
-    chrome.storage.local.set({
-      access_token: msg.access_token,
-      refresh_token: msg.refresh_token,
-      user: msg.user
-    })
-    sendResponse({ ok: true })
-    return true
-  }
-})
-
-// Internal messages (from popup, content scripts)
+// 内部消息（来自 popup / content scripts）
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  // Auth from login-bridge content script
-  if (msg.type === "AUTH_SUCCESS") {
-    chrome.storage.local.set({
-      access_token: msg.access_token,
-      refresh_token: msg.refresh_token,
-      user: msg.user
-    }, () => {
-      sendResponse({ ok: true })
-    })
-    return true
-  }
-
   if (msg.type === "GET_AUTH") {
     chrome.storage.local.get(["access_token", "user"], data => sendResponse(data))
     return true
@@ -48,6 +30,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 })
 
 async function apiCall(method, path, body) {
+  const API = await getApiUrl()
   const { access_token } = await chrome.storage.local.get("access_token")
   const headers = { "Content-Type": "application/json" }
   if (access_token) headers["Authorization"] = `Bearer ${access_token}`

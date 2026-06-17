@@ -197,7 +197,8 @@ class Pipeline:
 
     async def _sync_shopify(self, translated: dict, processed: dict, pricing: dict) -> dict:
         """同步到 Shopify：创建 Product + Variants + Images"""
-        shopify = ShopifyClient(self.shop.shop_domain, self.shop.access_token_encrypted)
+        from app.core.crypto import decrypt_secret
+        shopify = ShopifyClient(self.shop.shop_domain, decrypt_secret(self.shop.access_token_encrypted))
         raw = self.task.raw_data or {}
 
         base_price = pricing.get("base", {})

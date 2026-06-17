@@ -8,8 +8,40 @@ from app.dependencies import get_current_user
 from app.models import User, SubscriptionPlan, QuotaRule, AIProvider, AuditLog, Team
 from app.core.permissions import require, Permission
 from app.core.audit import get_active_sessions, force_logout_user, log_audit
+from app.core.crypto import encrypt_secret, decrypt_secret
+from app.services import platform_settings_service as platform_settings
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+# ── 平台设置（Shopify App 等，超管管理；secret 加密存、不回明文）──
+
+class PlatformSettingsRequest(BaseModel):
+    shopify_api_key: str | None = None
+    shopify_api_secret: str | None = None  # 留空表示不修改
+    shopify_scopes: str | None = None
+    shopify_app_base_url: str | None = None
+    admin_base_url: str | None = None
+
+
+@router.get("/platform-settings")
+async def get_platform_settings(
+    db: AsyncSession = Depends(get_db),
+    _: User = require(Permission.MANAGE_SUBSCRIPTIONS),
+):
+    return await platform_settings.get_public_settings(db)
+
+
+@router.put("/platform-settings")
+async def update_platform_settings(
+    req: PlatformSettingsRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = require(Permission.MANAGE_SUBSCRIPTIONS),
+):
+    # 只传非 None 的字段；secret 传空串会被 service 忽略（不覆盖原值）
+    values = {k: v for k, v in req.model_dump().items() if v is not None}
+    await platform_settings.set_values(db, values)
+    return await platform_settings.get_public_settings(db)
 
 
 # ── Me (当前用户信息) ──
@@ -228,7 +260,7 @@ async def create_ai_provider(req: CreateAIProviderRequest, db: AsyncSession = De
     provider = AIProvider(
         name=req.name, slug=req.slug, provider_type=req.provider_type,
         category=req.category, api_base_url=req.api_base_url,
-        api_key_encrypted=req.api_key, default_model=req.default_model,
+        api_key_encrypted=encrypt_secret(req.api_key), default_model=req.default_model,
         available_models=req.available_models, priority=req.priority,
     )
     db.add(provider)
@@ -247,7 +279,7 @@ async def update_ai_provider(provider_id: str, req: UpdateAIProviderRequest, db:
         if val is not None:
             setattr(p, field, val)
     if req.api_key is not None:
-        p.api_key_encrypted = req.api_key
+        p.api_key_encrypted = encrypt_secret(req.api_key)
     if req.available_models is not None:
         p.available_models = req.available_models
     await db.commit()
@@ -271,19 +303,66 @@ class FetchModelsRequest(BaseModel):
     provider_id: str | None = None
 
 
+def _same_origin(url_a: str, url_b: str) -> bool:
+    """比较两个 URL 的 scheme+host+port 是否一致。"""
+    from urllib.parse import urlparse
+    a, b = urlparse(url_a), urlparse(url_b)
+    return (a.scheme, a.hostname, a.port) == (b.scheme, b.hostname, b.port)
+
+
+def _ensure_safe_outbound_url(url: str) -> None:
+    """SSRF 防护：仅允许 http/https 的公网地址，禁止内网/本地/链路本地/元数据地址。"""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="仅支持 http/https 地址")
+    host = parsed.hostname
+    if not host:
+        raise HTTPException(status_code=400, detail="无效的地址")
+    # 解析所有 IP（含 IPv4/IPv6），任一落在私有/保留段即拒绝
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        raise HTTPException(status_code=400, detail="无法解析目标主机")
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if (
+            ip.is_private or ip.is_loopback or ip.is_link_local
+            or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+        ):
+            raise HTTPException(status_code=400, detail="禁止访问内网/保留地址")
+
+
 @router.post("/ai-providers/fetch-models")
-async def fetch_models(req: FetchModelsRequest, db: AsyncSession = Depends(get_db)):
-    """代理拉取 AI 提供商的模型列表"""
+async def fetch_models(
+    req: FetchModelsRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = require(Permission.MANAGE_SUBSCRIPTIONS),
+):
+    """代理拉取 AI 提供商的模型列表（仅管理员）"""
     import httpx
     api_key = req.api_key
-    # 编辑时未传 key，从 DB 读取已存储的 key
+    base = req.api_base_url.rstrip("/")
+    # 编辑时未传 key，从 DB 读取已存储的 key —— 但仅当目标 URL 与该 provider
+    # 已登记的 base_url 同源时才回填，防止把平台密钥发往攻击者指定的任意地址。
     if not api_key and req.provider_id:
         provider = await db.get(AIProvider, req.provider_id)
         if provider:
-            api_key = provider.api_key_encrypted
+            stored_base = (provider.api_base_url or "").rstrip("/")
+            if stored_base and _same_origin(base, stored_base):
+                api_key = decrypt_secret(provider.api_key_encrypted)
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="目标地址与已登记的 Provider 地址不一致，请重新填写 API Key",
+                )
     if not api_key:
         raise HTTPException(status_code=400, detail="请先填写 API Key")
-    base = req.api_base_url.rstrip("/")
+    # SSRF 防护：禁止内网/本地/链路本地地址
+    _ensure_safe_outbound_url(base)
     # GLM 没有 /models 端点，返回预设列表
     provider_lower = (req.api_base_url or "").lower()
     if "bigmodel" in provider_lower or "zhipu" in provider_lower:
@@ -351,6 +430,18 @@ async def kick_user(user_id: str, _: User = require(Permission.MANAGE_SUBSCRIPTI
     return {"ok": True, "message": f"User {user_id} has been logged out"}
 
 
+# 经此端点可授予的角色白名单（super_admin 不可经此授予）
+ASSIGNABLE_ROLES = {"member", "manager"}
+
+
+def _validate_assignable_role(role: str) -> None:
+    if role not in ASSIGNABLE_ROLES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"非法角色: {role}（仅允许 {', '.join(sorted(ASSIGNABLE_ROLES))}）",
+        )
+
+
 # ── Team Members (管理者) ──
 class AddMemberRequest(BaseModel):
     team_id: str
@@ -372,6 +463,7 @@ async def add_member(
         raise HTTPException(status_code=404, detail="Team not found")
     if current_user.role != "super_admin" and current_user.team_id != req.team_id:
         raise HTTPException(status_code=403)
+    _validate_assignable_role(req.role)
     existing = await db.scalar(select(User).where(User.email == req.email))
     if existing:
         raise HTTPException(status_code=400, detail="该邮箱已被注册")
@@ -456,6 +548,7 @@ async def update_member(
         new_values["password"] = "***"
 
     if req.role is not None:
+        _validate_assignable_role(req.role)
         old_values["role"] = user.role
         user.role = req.role
         new_values["role"] = req.role

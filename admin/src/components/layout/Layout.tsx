@@ -12,6 +12,7 @@ const superAdminNav = [
   { icon: "💳", label: "订阅套餐", href: "/plans" },
   { icon: "📏", label: "配额规则", href: "/quota-rules" },
   { icon: "🤖", label: "AI 提供商", href: "/ai-providers" },
+  { icon: "⚙️", label: "平台设置", href: "/platform-settings" },
   { icon: "👥", label: "用户管理", href: "/teams" },
   { icon: "📋", label: "审计日志", href: "/audit-logs" },
 ]
@@ -19,6 +20,7 @@ const userNav = [
   { icon: "🏊", label: "选品池", href: "/product-pool" },
   { icon: "🕒", label: "转入队列", href: "/transfer-jobs" },
   { icon: "📦", label: "商品管理", href: "/products" },
+  { icon: "🖼️", label: "素材库", href: "/materials" },
   { icon: "🔄", label: "导入任务", href: "/imports" },
   { icon: "🏪", label: "店铺管理", href: "/shops" },
   { icon: "💰", label: "定价规则", href: "/pricing" },
@@ -186,6 +188,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </header>
 
         {/* 多标签页 */}
+        <style>{`
+          .tab-close { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; flex:0 0 18px; border-radius:50%; font-size:14px; line-height:1; color:var(--gray-400); cursor:pointer; transition:background .12s ease, color .12s ease; }
+          .tab-close:hover { background:var(--gray-300); color:var(--gray-800); }
+        `}</style>
         <div style={{ display: "flex", gap: 4, padding: "6px 10px", background: "var(--gray-50)", borderBottom: "1px solid var(--gray-200)", overflowX: "auto", whiteSpace: "nowrap", position: "sticky", top: 48, zIndex: 17 }}>
           {tabs.map((tab, idx) => {
             const active = tab.path === pathname
@@ -199,15 +205,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 onDragEnd={() => { dragIdx.current = null; setDragOver(null) }}
                 onContextMenu={e => { e.preventDefault(); setCtx({ x: e.clientX, y: e.clientY, idx }) }}
                 title="可拖动排序 · 右键更多操作"
-                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 8px 4px 12px", borderRadius: 6, fontSize: ".78rem", cursor: "grab",
+                style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 6px 4px 12px", borderRadius: 6, fontSize: ".78rem", cursor: "grab",
                   background: active ? "#fff" : "transparent", color: active ? "var(--primary)" : "var(--gray-600)",
                   border: `1px solid ${dragOver === idx ? "var(--primary)" : active ? "var(--primary)" : "var(--gray-200)"}`,
                   boxShadow: dragOver === idx ? "0 0 0 2px var(--primary-50)" : "none",
                   fontWeight: active ? 600 : 400 }}>
                 <span style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>{tab.title}</span>
                 {tabs.length > 1 && (
-                  <span onClick={e => onCloseTab(e, tab.path)} title="关闭"
-                    style={{ fontSize: ".9rem", lineHeight: 1, color: "var(--gray-400)", padding: "0 2px", borderRadius: 4 }}>×</span>
+                  <span className="tab-close" onClick={e => onCloseTab(e, tab.path)}
+                    onMouseDown={e => e.stopPropagation()} draggable={false} title="关闭标签">×</span>
                 )}
               </div>
             )

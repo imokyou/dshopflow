@@ -1,8 +1,9 @@
+from datetime import datetime, timezone
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.dependencies import get_current_user, get_db
-from app.models import User, Team, Shop, ImportTask, QuotaRule
+from app.models import User, Team, Shop, ImportTask, SubscriptionPlan
 
 
 class Permission:
@@ -81,16 +82,21 @@ class QuotaChecker:
         if self._quota is None:
             team = await db.get(Team, self.team.id)
             if team and team.plan_id:
-                self._quota = await db.get(QuotaRule, team.plan_id)
+                # team.plan_id 指向 SubscriptionPlan，配额规则在 plan.quota_rule
+                plan = await db.get(SubscriptionPlan, team.plan_id)
+                self._quota = plan.quota_rule if plan else None
 
     async def check_monthly_import(self, db: AsyncSession) -> bool:
         await self._load(db)
         if not self._quota or self._quota.monthly_import_limit == 0:
             return True
+        # 跨库写法：在 Python 端计算本月首日，避免 SQLite 不支持的 date_trunc
+        now = datetime.now(timezone.utc)
+        month_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
         count = await db.scalar(
             select(func.count(ImportTask.id)).where(
                 ImportTask.team_id == self.team.id,
-                ImportTask.created_at >= func.date_trunc("month", func.now()),
+                ImportTask.created_at >= month_start,
             )
         )
         return count < self._quota.monthly_import_limit

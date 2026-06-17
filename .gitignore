@@ -6,3 +6,6 @@ logs/
 storage/
 *.db
 .hermes/
+
+.env
+backend/.env

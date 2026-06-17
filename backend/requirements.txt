@@ -1,0 +1,17 @@
+# DropShipFlow 后端依赖（生产）
+fastapi==0.136.3
+uvicorn[standard]==0.49.0
+SQLAlchemy==2.0.50
+aiosqlite==0.22.1
+pydantic>=2.5,<3
+pydantic-settings==2.14.1
+python-jose==3.5.0
+bcrypt==5.0.0
+httpx==0.28.1
+cryptography>=42.0
+# 在线会话监控 / 强制下线（可选 redis 服务；无 redis 则优雅降级）
+redis==8.0.0
+# 仅 imports 的 celery 直跑模式惰性引用；核心后台任务走进程内 worker，无需 celery 服务
+celery==5.6.3
+# 仅 STORAGE_BACKEND=s3 时惰性加载；默认本地存储不需要
+boto3==1.43.25

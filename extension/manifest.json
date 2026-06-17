@@ -11,6 +11,10 @@
     "http://127.0.0.1:8000/*",
     "http://127.0.0.1:3000/*"
   ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
   "action": {
     "default_title": "DropShipFlow — 点击打开侧边栏"
   },
@@ -20,11 +24,19 @@
   "background": {
     "service_worker": "background.js"
   },
-  "content_scripts": [{
-    "matches": ["*://detail.1688.com/offer/*.html"],
-    "js": ["content.js"],
-    "run_at": "document_idle"
-  }],
+  "content_scripts": [
+    {
+      "matches": ["*://detail.1688.com/offer/*.html"],
+      "js": ["inject.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["*://detail.1688.com/offer/*.html"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "icons": {
     "16": "icon16.png",
     "48": "icon48.png",

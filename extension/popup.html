@@ -58,10 +58,31 @@
   <!-- HEADER -->
   <div class="header">
     <span class="brand" id="brand" title="打开管理后台">⚡ DropShipFlow</span>
-    <span class="badge" id="headerStatus"></span>
+    <span style="display:flex;align-items:center;gap:8px;">
+      <span class="badge" id="headerStatus"></span>
+      <button id="btn-settings" title="设置后端域名" style="background:none;border:none;color:#fff;cursor:pointer;font-size:15px;line-height:1;padding:2px;opacity:.9;">⚙</button>
+    </span>
   </div>
 
   <div class="scroll">
+
+    <!-- STATE: SETTINGS -->
+    <div id="view-settings" class="body hidden">
+      <h3 style="font-size:13px;margin-bottom:10px;">⚙ 后端域名设置</h3>
+      <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px;">后端地址（API）</label>
+      <input id="cfgApi" type="text" placeholder="http://localhost:8000"
+        style="width:100%;padding:7px 9px;font-size:12px;border:1px solid #cbd5e1;border-radius:6px;margin-bottom:10px;"/>
+      <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px;">管理后台地址</label>
+      <input id="cfgAdmin" type="text" placeholder="http://localhost:3000"
+        style="width:100%;padding:7px 9px;font-size:12px;border:1px solid #cbd5e1;border-radius:6px;margin-bottom:6px;"/>
+      <p style="font-size:10px;color:#94a3b8;margin-bottom:10px;line-height:1.5;">留空恢复默认 localhost。保存时会请求访问该域名的权限。</p>
+      <div id="cfgErr" class="error hidden"></div>
+      <div class="row" style="margin-top:6px;">
+        <button class="btn btn-primary" id="btn-cfg-save" style="flex:1;">保存</button>
+        <button class="btn btn-secondary" id="btn-cfg-cancel" style="flex:1;">取消</button>
+      </div>
+      <button class="link-btn" id="btn-cfg-reset" style="display:block;margin:12px auto 0;">恢复默认（localhost）</button>
+    </div>
 
     <!-- STATE: LOGGED OUT -->
     <div id="view-logout" class="body center hidden">
@@ -112,6 +133,7 @@
     <button class="btn-danger" id="btn-logout">退出</button>
   </div>
 
+<script src="config.js"></script>
 <script src="popup.js"></script>
 </body>
 </html>

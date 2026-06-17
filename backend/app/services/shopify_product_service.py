@@ -1,18 +1,14 @@
 """商品 → Shopify 同步服务（商品管理模块）。
-有有效店铺 access_token 则调真实 Shopify API；否则模拟成功（生成假 shopify_id）。
+有有效店铺 access_token 才调真实 Shopify API；无凭证则明确报错（不再模拟）。
 不涉及选品池。
 """
-import random
 from datetime import datetime, timezone
 from app.integrations.shopify.client import ShopifyClient
+from app.core.crypto import decrypt_secret
 
 
 def _utcnow():
     return datetime.now(timezone.utc)
-
-
-def _fake_id() -> int:
-    return random.randint(10_000_000_000, 99_999_999_999)
 
 
 def build_shopify_payload(product, status: str) -> dict:
@@ -83,37 +79,35 @@ def build_shopify_payload(product, status: str) -> dict:
 async def sync_to_shopify(db, product, shop, status: str) -> dict:
     """把商品以指定 status 推到 Shopify（创建或更新），无店铺凭证则模拟。"""
     payload = build_shopify_payload(product, status)
-    mocked = True
 
-    if shop and getattr(shop, "shop_domain", None) and getattr(shop, "access_token_encrypted", None):
-        client = ShopifyClient(shop.shop_domain, shop.access_token_encrypted)
-        try:
-            if product.shopify_product_id:
-                # 更新：基本字段 + status（变体/图片更新较复杂，这里同步主字段与状态）
-                fields = {k: payload[k] for k in ("title", "body_html", "vendor", "status", "product_type", "tags") if k in payload}
-                res = await client.update_product(int(product.shopify_product_id), fields)
-            else:
-                res = await client.create_product_raw(payload)
-            sp = (res or {}).get("product", {})
-            if sp.get("id"):
-                product.shopify_product_id = sp["id"]
-            if sp.get("handle"):
-                product.shopify_handle = sp["handle"]
-            product.shop_id = shop.id
-            mocked = False
-        except Exception as e:
-            raise RuntimeError(f"Shopify 同步失败: {e}")
+    # 无可用店铺凭证 → 明确报错（不再造假 shopify_id 冒充成功，避免误导）
+    if not (shop and getattr(shop, "shop_domain", None) and getattr(shop, "access_token_encrypted", None)):
+        raise RuntimeError("未连接可用的 Shopify 店铺，请先在『店铺管理』授权连接后再上架")
 
-    if mocked and not product.shopify_product_id:
-        product.shopify_product_id = _fake_id()
+    client = ShopifyClient(shop.shop_domain, decrypt_secret(shop.access_token_encrypted) or "")
+    try:
+        if product.shopify_product_id:
+            # 更新：基本字段 + status（变体/图片增量更新见后续，本轮同步主字段与状态）
+            fields = {k: payload[k] for k in ("title", "body_html", "vendor", "status", "product_type", "tags") if k in payload}
+            res = await client.update_product(int(product.shopify_product_id), fields)
+        else:
+            res = await client.create_product_raw(payload)
+        sp = (res or {}).get("product", {})
+        if sp.get("id"):
+            product.shopify_product_id = sp["id"]
+        if sp.get("handle"):
+            product.shopify_handle = sp["handle"]
+        product.shop_id = shop.id
+    except Exception as e:
+        raise RuntimeError(f"Shopify 同步失败: {e}")
 
     product.status = status
     product.shopify_synced_at = _utcnow()
     await db.commit()
     await db.refresh(product)
     return {
-        "mocked": mocked,
         "status": product.status,
         "shopify_product_id": product.shopify_product_id,
         "shopify_handle": product.shopify_handle,
+        "shop_domain": shop.shop_domain,
     }

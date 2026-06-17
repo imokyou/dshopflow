@@ -5,18 +5,25 @@ import { api } from "@/lib/api"
 const cartesian = (lists: string[][]): string[][] =>
   lists.reduce<string[][]>((acc, l) => acc.flatMap(a => l.map(v => [...a, v])), [[]])
 
-function buildVariants(options: any[], prev: any[]): any[] {
+// SKU 生成规则：SPU + 各规格值（用 - 连接）。无 SPU 时回退到原有 SKU。
+const skuFor = (spu: string, combo: (string | null | undefined)[], fallback = ""): string => {
+  const parts = combo.filter(Boolean) as string[]
+  if (!spu) return fallback
+  return [spu, ...parts].join("-")
+}
+
+function buildVariants(options: any[], prev: any[], spu = ""): any[] {
   const valid = options.filter(o => o.name && (o.values || []).length).slice(0, 3)
   const prevByKey: Record<string, any> = {}
   ;(prev || []).forEach(v => { prevByKey[[v.option1, v.option2, v.option3].filter(Boolean).join(" / ")] = v })
   if (valid.length === 0) {
     const ex = prev?.[0] || {}
-    return [{ title: "Default", option1: null, option2: null, option3: null, price: ex.price ?? "", compare_at_price: ex.compare_at_price ?? "", sku: ex.sku ?? "", inventory_quantity: ex.inventory_quantity ?? 0, barcode: ex.barcode ?? "" }]
+    return [{ title: "Default", option1: null, option2: null, option3: null, price: ex.price ?? "", compare_at_price: ex.compare_at_price ?? "", sku: skuFor(spu, [], ex.sku ?? ""), inventory_quantity: ex.inventory_quantity ?? 0, barcode: ex.barcode ?? "" }]
   }
   return cartesian(valid.map(o => o.values)).map(combo => {
     const key = combo.join(" / ")
     const ex = prevByKey[key] || {}
-    return { title: key, option1: combo[0] ?? null, option2: combo[1] ?? null, option3: combo[2] ?? null, price: ex.price ?? "", compare_at_price: ex.compare_at_price ?? "", sku: ex.sku ?? "", inventory_quantity: ex.inventory_quantity ?? 0, barcode: ex.barcode ?? "" }
+    return { title: key, option1: combo[0] ?? null, option2: combo[1] ?? null, option3: combo[2] ?? null, price: ex.price ?? "", compare_at_price: ex.compare_at_price ?? "", sku: skuFor(spu, combo, ex.sku ?? ""), inventory_quantity: ex.inventory_quantity ?? 0, barcode: ex.barcode ?? "" }
   })
 }
 
@@ -67,10 +74,35 @@ export default function ProductEditor({ id, onClose, onSaved, onLoaded }: { id: 
   const [err, setErr] = useState("")
   const [lightbox, setLightbox] = useState<number | null>(null)
   const [imgSel, setImgSel] = useState<Set<number>>(new Set())
+  const [spuRules, setSpuRules] = useState<any[]>([])
+  const [spuRuleId, setSpuRuleId] = useState("")
+  const [genningSpu, setGenningSpu] = useState(false)
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }))
 
   const loadCollections = async () => { try { setCollections((await api.getCollections() as any) || []) } catch { setCollections([]) } }
   useEffect(() => { loadCollections() }, [])
+  useEffect(() => { api.getSpuRules().then((r: any) => setSpuRules(Array.isArray(r) ? r : (r?.items || []))).catch(() => setSpuRules([])) }, [])
+
+  const generateSpu = async () => {
+    if (!spuRuleId) { setErr("请先选择 SPU 规则"); return }
+    setErr(""); setGenningSpu(true)
+    try {
+      const r: any = await api.generateSpu(spuRuleId, isNew ? undefined : id)
+      // 生成/更换 SPU 时，按规则 SKU = SPU + 规格 同步重算各变体 SKU
+      setForm((f: any) => ({
+        ...f, spu: r.spu, spu_code: r.spu_code,
+        variants: (f.variants || []).map((v: any) => ({ ...v, sku: skuFor(r.spu, [v.option1, v.option2, v.option3]) })),
+      }))
+    } catch (e: any) { setErr(e?.message || "生成 SPU 失败") }
+    finally { setGenningSpu(false) }
+  }
+
+  // 按当前 SPU + 规格重算所有变体 SKU（SPU 更新后手动刷新 SKU 款号）
+  const regenSkus = () => {
+    if (!form.spu) { setErr("请先生成或填写 SPU，再生成 SKU 款号"); return }
+    setErr("")
+    setForm((f: any) => ({ ...f, variants: (f.variants || []).map((v: any) => ({ ...v, sku: skuFor(f.spu, [v.option1, v.option2, v.option3]) })) }))
+  }
 
   useEffect(() => {
     if (isNew) {
@@ -100,11 +132,11 @@ export default function ProductEditor({ id, onClose, onSaved, onLoaded }: { id: 
   const addOption = () => set("options", [...form.options, { name: "", values: [] }])
   const updOption = (i: number, patch: any) => {
     const opts = form.options.map((o: any, idx: number) => idx === i ? { ...o, ...patch } : o)
-    setForm((f: any) => ({ ...f, options: opts, variants: buildVariants(opts, f.variants) }))
+    setForm((f: any) => ({ ...f, options: opts, variants: buildVariants(opts, f.variants, f.spu || "") }))
   }
   const delOption = (i: number) => {
     const opts = form.options.filter((_: any, idx: number) => idx !== i)
-    setForm((f: any) => ({ ...f, options: opts, variants: buildVariants(opts, f.variants) }))
+    setForm((f: any) => ({ ...f, options: opts, variants: buildVariants(opts, f.variants, f.spu || "") }))
   }
   const updVariant = (i: number, patch: any) => set("variants", form.variants.map((v: any, idx: number) => idx === i ? { ...v, ...patch } : v))
 
@@ -139,6 +171,9 @@ export default function ProductEditor({ id, onClose, onSaved, onLoaded }: { id: 
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
         <button className="btn btn-ghost btn-sm" onClick={onClose}>← 返回</button>
         <h1 className="page-title" style={{ margin: 0 }}>{isNew ? "添加商品" : "编辑商品"}</h1>
+        {form.source_url && (
+          <a className="btn btn-ghost btn-sm" href={form.source_url} target="_blank" rel="noopener noreferrer" title="打开来源选品池的 1688 原始页面">🔗 原 1688 页面</a>
+        )}
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button className="btn btn-secondary" disabled={saving} onClick={() => save(false)}>{saving ? "保存中…" : "保存"}</button>
           <button className="btn btn-primary" disabled={saving} onClick={() => save(true)}>保存并发布</button>
@@ -198,7 +233,12 @@ export default function ProductEditor({ id, onClose, onSaved, onLoaded }: { id: 
             ))}
             {form.options.length < 3 && <button className="btn btn-ghost btn-sm" onClick={addOption}>+ 添加选项</button>}
 
-            <table style={{ fontSize: ".75rem", marginTop: 10, width: "100%", tableLayout: "fixed" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10, gap: 8 }}>
+              <span style={{ fontSize: ".72rem", color: "var(--gray-400)" }}>SKU 规则：SPU + 规格（如 {form.spu ? form.spu : "MO00001"}-RED-80CM）</span>
+              <button className="btn btn-secondary btn-sm" onClick={regenSkus} disabled={!form.spu} title={form.spu ? "按当前 SPU + 规格重算所有变体 SKU" : "请先生成或填写 SPU"}>🔄 生成 SKU 款号</button>
+            </div>
+
+            <table style={{ fontSize: ".75rem", marginTop: 8, width: "100%", tableLayout: "fixed" }}>
               <thead><tr>
                 <th style={{ width: "28%" }}>变体</th>
                 <th style={{ width: 72 }}>价格($)</th>
@@ -233,6 +273,21 @@ export default function ProductEditor({ id, onClose, onSaved, onLoaded }: { id: 
               <option value="active">已上架</option>
               <option value="archived">已归档</option>
             </select>
+          </Card>
+          <Card title="SPU 款号">
+            <Field label="SPU" hint={form.spu_code ? `规则代码：${form.spu_code}` : "规则代码 + 5 位自增序号，如 MK00001"}>
+              <input className="input" value={form.spu || ""} onChange={e => set("spu", e.target.value)} placeholder="选规则后点「生成」，或手动填写" style={{ width: "100%", fontFamily: "monospace" }} />
+            </Field>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <select className="input" value={spuRuleId} onChange={e => setSpuRuleId(e.target.value)} style={{ flex: 1 }}>
+                <option value="">选择 SPU 规则…</option>
+                {spuRules.map((s: any) => <option key={s.id} value={s.id}>{s.name}（{s.code}）</option>)}
+              </select>
+              <button className="btn btn-secondary btn-sm" disabled={!spuRuleId || genningSpu} onClick={generateSpu} style={{ whiteSpace: "nowrap" }}>
+                {genningSpu ? "生成中…" : "生成"}
+              </button>
+            </div>
+            <div style={{ fontSize: ".72rem", color: "var(--gray-400)", marginTop: 6 }}>自动生成后仍可手动修改；保存时以输入框为准。</div>
           </Card>
           <Card title="商品组织">
             <Field label="供应商(Vendor)"><input className="input" value={form.vendor || ""} onChange={e => set("vendor", e.target.value)} style={{ width: "100%" }} /></Field>

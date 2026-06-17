@@ -9,6 +9,9 @@ from app.core.permissions import require, Permission, get_current_team_or_raise,
 
 router = APIRouter(prefix="/imports", tags=["imports"])
 
+# 保持后台协程引用，防止被 GC 提前回收
+_bg_tasks: set = set()
+
 
 class CreateImportRequest(BaseModel):
     team_id: str
@@ -137,16 +140,14 @@ async def process_import(
     await db.commit()
 
     if req.mode == "direct":
-        # 同步模式（开发/无 Redis 环境）：在独立线程中运行
-        import threading
+        # 同步模式（开发/无 Redis 环境）：在主事件循环内以后台协程运行，
+        # 不再起新线程 + 新事件循环 + 新连接（pipeline 内部为 async I/O，不阻塞）。
+        import asyncio
         from app.services.pipeline_service import Pipeline
 
-        def _run_in_thread():
-            import asyncio
-            asyncio.run(Pipeline.run_sync(task_id))
-
-        thread = threading.Thread(target=_run_in_thread, daemon=True)
-        thread.start()
+        t = asyncio.create_task(Pipeline.run_sync(task_id))
+        _bg_tasks.add(t)
+        t.add_done_callback(_bg_tasks.discard)
         return {"message": "Pipeline started in background", "mode": "direct", "task_id": task_id}
     else:
         # Celery 模式
@@ -166,6 +167,9 @@ async def get_import_status(
     """轻量轮询端点 — 只返回 status + progress"""
     task = await db.get(ImportTask, task_id)
     if not task:
+        raise HTTPException(status_code=404)
+    # 团队隔离：非 super_admin 只能查本团队任务，防止枚举 task_id 泄露他团队状态
+    if current_user.role != "super_admin" and task.team_id != current_user.team_id:
         raise HTTPException(status_code=404)
     return {
         "id": task.id,

@@ -1,15 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, func
+from sqlalchemy import select, or_, func, delete as sa_delete
 from pydantic import BaseModel
 from typing import Any
 import re
-import threading
 from datetime import datetime, timezone
 from sqlalchemy.orm import joinedload
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models import User, Product, Shop, Collection, ProductPool, PricingRule, TransferJob, SpuRule
+from app.models import User, Product, Shop, Collection, ProductPool, PricingRule, TransferJob, SpuRule, Material
 from app.core.permissions import require, Permission
 from app.services.shopify_product_service import sync_to_shopify
 from app.services.translate_service import translate_product, translate_terms
@@ -30,6 +29,35 @@ def _gen_seo(title: str, body_html: str) -> tuple[str, str]:
     return seo_title, desc[:160]
 
 
+async def _next_spu(db: AsyncSession, team_id: str, code: str, exclude_id: str | None = None) -> str:
+    """生成下一个 SPU：规则代码 + 5 位序号（按 team + code 分别自增）。
+
+    取该 team 下、同 spu_code 的已有商品里序号最大值 +1（解析 SPU 末尾数字，
+    对删除/手动改值更稳健），不足 5 位左补 0，如 MK00001、MK00002。
+    """
+    code = (code or "").strip()
+    if not code:
+        raise ValueError("SPU 规则代码为空")
+    stmt = select(Product.spu).where(
+        Product.team_id == team_id, Product.spu_code == code, Product.spu.isnot(None)
+    )
+    if exclude_id:
+        stmt = stmt.where(Product.id != exclude_id)
+    rows = (await db.scalars(stmt)).all()
+    mx = 0
+    for s in rows:
+        # 只数以该代码为前缀的 SPU（防御：即便混入异代码记录也不会误把它的数字当序号）
+        if not s or not s.startswith(code):
+            continue
+        digits = "".join(ch for ch in s[len(code):] if ch.isdigit())
+        if digits:
+            try:
+                mx = max(mx, int(digits))
+            except ValueError:
+                pass
+    return f"{code}{mx + 1:05d}"
+
+
 # ── Schemas ──
 class ProductIn(BaseModel):
     title: str | None = None
@@ -48,6 +76,8 @@ class ProductIn(BaseModel):
     seo_description: str | None = None
     status: str | None = None          # draft | active | archived
     shop_id: str | None = None
+    spu: str | None = None
+    spu_code: str | None = None
 
 
 def _min_price(variants):
@@ -76,6 +106,7 @@ def _summary(p: Product) -> dict:
     imgs = p.images or []
     return {
         "id": p.id, "title": p.title or p.title_en or p.title_cn, "status": p.status,
+        "spu": p.spu, "spu_code": p.spu_code,
         "vendor": p.vendor, "product_type": p.product_type, "tags": p.tags,
         "price": p.price, "image": (imgs[0].get("src") if imgs and isinstance(imgs[0], dict) else None),
         "image_count": len(imgs), "variant_count": len(p.variants or []),
@@ -89,6 +120,7 @@ def _summary(p: Product) -> dict:
 def _detail(p: Product) -> dict:
     return {
         "id": p.id, "title": p.title, "title_cn": p.title_cn, "title_en": p.title_en,
+        "spu": p.spu, "spu_code": p.spu_code,
         "body_html": p.body_html, "vendor": p.vendor, "product_type": p.product_type,
         "tags": p.tags, "price": p.price, "options": p.options or [], "variants": p.variants or [],
         "images": p.images or [], "collection_ids": p.collection_ids or [],
@@ -104,7 +136,7 @@ def _apply(p: Product, req: ProductIn):
     data = req.model_dump(exclude_unset=True)
     for field in ("title", "title_cn", "title_en", "body_html", "vendor", "product_type",
                   "tags", "options", "variants", "images", "collection_ids",
-                  "seo_title", "seo_description", "status", "shop_id"):
+                  "seo_title", "seo_description", "status", "shop_id", "spu", "spu_code"):
         if field in data:
             setattr(p, field, data[field])
     # price 优先用显式值，否则按变体最低价
@@ -183,11 +215,43 @@ async def list_transfer_jobs(
     }
 
 
+# ── 生成 SPU（预览，不落库；编辑器「生成」按钮调用）──
+class GenerateSpuRequest(BaseModel):
+    spu_rule_id: str
+    product_id: str | None = None  # 编辑已有商品时排除自身，避免续号被自己顶高
+
+
+@router.post("/generate-spu")
+async def generate_spu(
+    req: GenerateSpuRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _: User = require(Permission.EDIT_PRODUCT),
+):
+    spu_rule = await db.get(SpuRule, req.spu_rule_id)
+    if not spu_rule or (current_user.role != "super_admin" and spu_rule.team_id != current_user.team_id):
+        raise HTTPException(status_code=400, detail="SPU 规则无效")
+    team_id = current_user.team_id or spu_rule.team_id
+    code = (spu_rule.code or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="该 SPU 规则未设置代码")
+    spu = await _next_spu(db, team_id, code, exclude_id=req.product_id)
+    return {"spu": spu, "spu_code": code}
+
+
 # ── Detail ──
 @router.get("/{product_id}")
 async def get_product(product_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     p = await _get_owned(product_id, current_user, db)
-    return _detail(p)
+    d = _detail(p)
+    # 来源选品池的原始 1688 页面（供详情页「原页面」按钮跳转）
+    d["source_pool_id"] = p.source_pool_id
+    d["source_url"] = None
+    if p.source_pool_id:
+        pool = await db.get(ProductPool, p.source_pool_id)
+        if pool:
+            d["source_url"] = pool.source_url
+    return d
 
 
 # ── Create ──
@@ -273,6 +337,56 @@ def _make_sku(code: str, variant: dict) -> str:
     return "-".join([p for p in parts if p])
 
 
+def _img_base(url: str) -> str:
+    """图片去重用基址：去查询串与阿里 CDN 尺寸后缀（_800x800.jpg）。"""
+    u = (url or "").split("?")[0]
+    return re.sub(r"_\d+x\d+\.(jpg|jpeg|png|webp)$", "", u, flags=re.I)
+
+
+def _build_material_rows(product_spu: str, variants: list, detail, product_images: list, drop_small: set | None = None) -> list[dict]:
+    """构造素材行：每张图一条，必绑 SPU；若该图是某 SKU 主图则绑定 SKU。
+
+    - 来源1：选品池 SKU 自带的图 → 绑定到规格匹配的变体 SKU。
+    - 来源2：商品图廊里其余图 → 仅绑 SPU（sku=None）。
+    按图片基址去重，避免同一张图重复；drop_small 中的小图（<400×400）跳过。
+    """
+    drop_small = drop_small or set()
+    rows: list[dict] = []
+    used: set[str] = set()
+
+    skus = (detail.skus if detail else None) or []
+    for s in skus:
+        if not isinstance(s, dict):
+            continue
+        img = s.get("image")
+        if not img or img in drop_small:
+            continue
+        base = _img_base(img)
+        if base in used:
+            continue
+        token = _sku_value_part(s.get("spec") or "")
+        sku = None
+        if token:
+            for v in variants:
+                if token in (v.get("sku") or ""):
+                    sku = v.get("sku")
+                    break
+        used.add(base)
+        rows.append({"spu": product_spu, "sku": sku, "image_url": img})
+
+    for im in product_images or []:
+        src = im.get("src") if isinstance(im, dict) else (im if isinstance(im, str) else None)
+        if not src or not str(src).startswith("http"):
+            continue
+        base = _img_base(src)
+        if base in used:
+            continue
+        used.add(base)
+        rows.append({"spu": product_spu, "sku": None, "image_url": src})
+
+    return rows
+
+
 def _finalize_parts(raw_vals, en_map) -> list:
     """把规格值列表转成「SKU 就绪的英文片段」，保证唯一非空。
     en_map: {原文: AI英文} 优先用；否则 COLOR_MAP/尺码规整；再不行用编码或序号兜底。"""
@@ -319,6 +433,14 @@ async def _transfer_build_and_save(db: AsyncSession, pool, team_id: str, user_id
         raise ValueError("请先选择有效的 SPU 规则")
     spu_code = (spu.code or "").strip()
 
+    # 提前确定本商品的 SPU 款号（SKU = SPU + 规格，需在建变体前知道）：
+    # 重复转入沿用已有 SPU（稳定不变）；否则按规则代码续号生成新的。
+    existing = await db.scalar(
+        select(Product).where(Product.source_pool_id == pool.id, Product.team_id == team_id)
+        .order_by(Product.created_at.desc()).limit(1)
+    )
+    product_spu = (existing.spu if existing and existing.spu else None) or await _next_spu(db, team_id, spu_code)
+
     language = opts.get("language") or "en"
     detail = pool.detail
     desc_cn = detail.desc_cn if detail else ""
@@ -347,17 +469,38 @@ async def _transfer_build_and_save(db: AsyncSession, pool, team_id: str, user_id
                 if trans.bullet_points:
                     body += "<ul>" + "".join(f"<li>{bp}</li>" for bp in trans.bullet_points) + "</ul>"
 
-    # 图片
+    # 图片 —— 转入时过滤掉尺寸不足 400×400 的图（含商品图与 SKU 图）
+    skus = (detail.skus if detail else None) or []
+    candidate_urls = []
+    for im in (detail.images if detail else None) or []:
+        s = _pool_image_src(im)
+        if s and str(s).startswith("http"):
+            candidate_urls.append(s)
+    for s in skus:
+        si = s.get("image") if isinstance(s, dict) else None
+        if si and str(si).startswith("http"):
+            candidate_urls.append(si)
+
+    drop_small: set[str] = set()
+    if candidate_urls:
+        try:
+            from app.services.image_size import select_small_images
+            drop_small = await select_small_images(candidate_urls, min_w=400, min_h=400)
+        except Exception:
+            drop_small = set()  # 探测失败不阻断转入，全部保留
+
     images = []
-    for i, im in enumerate(((detail.images if detail else None) or [])):
+    pos = 0
+    for im in (detail.images if detail else None) or []:
         src = _pool_image_src(im)
-        if src and str(src).startswith("http"):
-            images.append({"src": src, "alt": "", "position": i + 1})
+        if src and str(src).startswith("http") and src not in drop_small:
+            pos += 1
+            images.append({"src": src, "alt": "", "position": pos})
     if not images and pool.main_image_url:
         images.append({"src": pool.main_image_url, "alt": "", "position": 1})
 
     # 定价
-    skus = (detail.skus if detail else None) or []
+    rule = None
     rule = None
     engine = None
     if opts.get("pricing_rule_id"):
@@ -408,7 +551,7 @@ async def _transfer_build_and_save(db: AsyncSession, pool, team_id: str, user_id
                  "option1": combo[0], "option2": combo[1] if len(combo) > 1 else None,
                  "option3": combo[2] if len(combo) > 2 else None,
                  "price": fp, "compare_at_price": cap,
-                 "sku": "-".join([spu_code] + [c for c in combo if c]),
+                 "sku": "-".join([product_spu] + [c for c in combo if c]),
                  "inventory_quantity": rep_stock, "barcode": ""}
             variants.append(v)
 
@@ -429,14 +572,14 @@ async def _transfer_build_and_save(db: AsyncSession, pool, team_id: str, user_id
                 v = {"title": sp, "option1": sp, "option2": None, "option3": None,
                      "price": pfp, "compare_at_price": pcap, "sku": "",
                      "inventory_quantity": int((s.get("stock") if isinstance(s, dict) else 0) or 0), "barcode": ""}
-                v["sku"] = _make_sku(spu_code, v)
+                v["sku"] = _make_sku(product_spu, v)
                 variants.append(v)
 
     # 3) 兜底：单一默认变体
     if not variants:
         total_stock = sum(stocks) or rep_stock
         v = {"title": "Default", "option1": None, "option2": None, "option3": None,
-             "price": fp, "compare_at_price": cap, "sku": spu_code, "inventory_quantity": total_stock, "barcode": ""}
+             "price": fp, "compare_at_price": cap, "sku": product_spu, "inventory_quantity": total_stock, "barcode": ""}
         variants = [v]
 
     seo_title, seo_desc = (_gen_seo(title_final, body) if opts.get("generate_seo", True) else (None, None))
@@ -449,21 +592,34 @@ async def _transfer_build_and_save(db: AsyncSession, pool, team_id: str, user_id
         seo_title=seo_title, seo_description=seo_desc, status="draft",
     )
 
-    # 已转入过同一选品池商品 → 覆盖更新；否则新建
-    existing = await db.scalar(
-        select(Product).where(Product.source_pool_id == pool.id, Product.team_id == team_id)
-        .order_by(Product.created_at.desc()).limit(1)
-    )
+    # 已转入过同一选品池商品 → 覆盖更新；否则新建（existing / product_spu 已在前面确定）
     if existing:
         for k, v in content.items():
             setattr(existing, k, v)
+        existing.spu = product_spu
+        existing.spu_code = spu_code
         p = existing
     else:
         p = Product(team_id=team_id, user_id=user_id, source_pool_id=pool.id,
+                    spu=product_spu, spu_code=spu_code,
                     vendor="", product_type="", tags="", collection_ids=[], **content)
         db.add(p)
     await db.commit()
     await db.refresh(p)
+
+    # 生成素材库行（覆盖该商品旧素材，保持与最新图片一致）；描述由后台 worker 视觉生成
+    try:
+        await db.execute(sa_delete(Material).where(Material.product_id == p.id))
+        for i, m in enumerate(_build_material_rows(product_spu, variants, detail, images, drop_small)):
+            db.add(Material(
+                team_id=team_id, user_id=user_id, product_id=p.id, source_pool_id=pool.id,
+                spu=m["spu"], sku=m["sku"], image_url=m["image_url"],
+                status="pending", position=i,
+            ))
+        await db.commit()
+    except Exception:
+        await db.rollback()  # 素材生成失败不影响转入主流程
+
     return p
 
 
@@ -491,6 +647,8 @@ async def create_from_pool(
         p = await _transfer_build_and_save(db, pool, current_user.team_id, current_user.id, req.model_dump())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    from app.core import worker
+    worker.notify()  # 唤醒 worker 生成素材描述
     return _detail(p)
 
 
@@ -530,7 +688,8 @@ async def queue_from_pool(
                            pool_title=pool.title_cn, status="pending", options=opts))
         queued += 1
     await db.commit()
-    _ensure_worker()
+    from app.core import worker
+    worker.notify()
     return {"queued": queued}
 
 
@@ -548,70 +707,12 @@ async def clear_finished_jobs(
     return {"ok": True}
 
 
-# ── 后台 worker（单例线程，逐个处理 pending 任务）──
-_worker_lock = threading.Lock()
-_worker_running = False
-
-
-def _ensure_worker():
-    global _worker_running
-    with _worker_lock:
-        if _worker_running:
-            return
-        _worker_running = True
-    threading.Thread(target=_worker_loop, daemon=True).start()
-
-
-def _worker_loop():
-    global _worker_running
-    import asyncio
-    try:
-        asyncio.run(_drain())
-    except Exception:
-        pass
-    finally:
-        with _worker_lock:
-            _worker_running = False
-
-
+# ── 转入任务恢复（worker 逻辑见 app/core/worker.py）──
 async def resume_pending_jobs():
-    """启动时调用：把中断的 running 重置为 pending，并拉起 worker 继续处理。"""
-    from sqlalchemy import update as sa_update
-    from app.database import async_session
-    async with async_session() as db:
-        await db.execute(sa_update(TransferJob).where(TransferJob.status == "running").values(status="pending"))
-        await db.commit()
-        cnt = await db.scalar(select(func.count()).select_from(TransferJob).where(TransferJob.status == "pending"))
-    if cnt and cnt > 0:
-        _ensure_worker()
-
-
-async def _drain():
-    import asyncio
-    from app.database import async_session
-    while True:
-        async with async_session() as db:
-            job = await db.scalar(
-                select(TransferJob).where(TransferJob.status == "pending").order_by(TransferJob.created_at.asc()).limit(1)
-            )
-            if not job:
-                return
-            job.status = "running"
-            await db.commit()
-            try:
-                pool = await _load_pool_full(db, job.pool_id)
-                if not pool:
-                    raise ValueError("选品池商品已不存在")
-                product = await _transfer_build_and_save(db, pool, job.team_id, job.user_id, job.options or {})
-                job.status = "completed"
-                job.product_id = product.id
-                job.completed_at = datetime.now(timezone.utc)
-            except Exception as e:
-                job.status = "failed"
-                job.error = str(e)
-                job.completed_at = datetime.now(timezone.utc)
-            await db.commit()
-        await asyncio.sleep(0.3)  # 慢慢处理，降低 DB/AI 压力
+    """启动时调用：恢复中断任务并确保后台 worker 在运行（委托给统一 worker 模块）。"""
+    from app.core import worker
+    await worker.resume_interrupted()
+    await worker.start_worker()
 
 
 # ── Update ──
@@ -643,8 +744,9 @@ async def delete_product(
         shop = await _pick_shop(p, db)
         if shop and shop.shop_domain and shop.access_token_encrypted:
             from app.integrations.shopify.client import ShopifyClient
+            from app.core.crypto import decrypt_secret
             try:
-                await ShopifyClient(shop.shop_domain, shop.access_token_encrypted).delete_product(int(p.shopify_product_id))
+                await ShopifyClient(shop.shop_domain, decrypt_secret(shop.access_token_encrypted)).delete_product(int(p.shopify_product_id))
             except Exception:
                 pass  # 远端删除失败不阻塞本地删除
     await db.delete(p)
@@ -662,7 +764,10 @@ async def publish_product(
 ):
     p = await _get_owned(product_id, current_user, db)
     shop = await _pick_shop(p, db)
-    result = await sync_to_shopify(db, p, shop, status="active")
+    try:
+        result = await sync_to_shopify(db, p, shop, status="active")
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"ok": True, **result}
 
 
@@ -675,7 +780,10 @@ async def unpublish_product(
 ):
     p = await _get_owned(product_id, current_user, db)
     shop = await _pick_shop(p, db)
-    result = await sync_to_shopify(db, p, shop, status="draft")
+    try:
+        result = await sync_to_shopify(db, p, shop, status="draft")
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"ok": True, **result}
 
 
@@ -688,5 +796,8 @@ async def sync_product(
 ):
     p = await _get_owned(product_id, current_user, db)
     shop = await _pick_shop(p, db)
-    result = await sync_to_shopify(db, p, shop, status=(p.status or "draft"))
+    try:
+        result = await sync_to_shopify(db, p, shop, status=(p.status or "draft"))
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"ok": True, **result}

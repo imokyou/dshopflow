@@ -1,13 +1,27 @@
-from fastapi import APIRouter, Depends, HTTPException
+import asyncio
+from datetime import datetime, timezone
+from urllib.parse import quote
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
-from app.database import get_db
+from app.database import get_db, async_session
 from app.dependencies import get_current_user
-from app.models import User, Shop
+from app.models import User, Shop, Team
 from app.core.permissions import require, Permission, get_current_team_or_raise, QuotaChecker
+from app.core.crypto import encrypt_secret, decrypt_secret
+from app.integrations.shopify import oauth
+from app.services import platform_settings_service as platform_settings
 
 router = APIRouter(prefix="/shops", tags=["shops"])
+
+
+def _admin_redirect(query: str, base: str) -> RedirectResponse:
+    b = (base or "http://localhost:3000").rstrip("/")
+    return RedirectResponse(url=f"{b}/shops?{query}")
 
 
 class CreateShopRequest(BaseModel):
@@ -36,13 +50,17 @@ async def create_shop(
     if not await checker.check_shops(db):
         raise HTTPException(status_code=403, detail="店铺数量已达上限")
 
+    norm = oauth.normalize_shop(req.shop_domain)
+    if not norm:
+        raise HTTPException(status_code=400, detail="店铺 handle/域名不正确：填 handle（如 dshopflow）或完整 xxx.myshopify.com")
+
     shop = Shop(
         team_id=team_id, created_by=current_user.id,
-        shop_domain=req.shop_domain,
-        shop_name=req.shop_name or req.shop_domain,
+        shop_domain=norm,
+        shop_name=req.shop_name or norm,
         alias=req.alias,
         custom_domain=req.custom_domain,
-        access_token_encrypted=req.access_token,
+        access_token_encrypted=encrypt_secret(req.access_token),
         tags=req.tags,
     )
     db.add(shop)
@@ -54,19 +72,256 @@ async def create_shop(
     }
 
 
+class UpdateShopRequest(BaseModel):
+    alias: str | None = None
+    shop_domain: str | None = None
+    shop_name: str | None = None
+    custom_domain: str | None = None
+    access_token: str | None = None  # 留空表示不修改 token
+    tags: str | None = None
+    is_active: bool | None = None
+
+
+async def _owned_shop(shop_id: str, current_user: User, db: AsyncSession) -> Shop:
+    shop = await db.get(Shop, shop_id)
+    if not shop:
+        raise HTTPException(status_code=404, detail="店铺不存在")
+    if current_user.role != "super_admin" and shop.team_id != current_user.team_id:
+        raise HTTPException(status_code=403, detail="无权访问")
+    return shop
+
+
+@router.put("/{shop_id}")
+async def update_shop(
+    shop_id: str,
+    req: UpdateShopRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _: User = require(Permission.MANAGE_SHOPS),
+):
+    shop = await _owned_shop(shop_id, current_user, db)
+    need_recheck = False
+
+    if req.shop_domain is not None:
+        norm = oauth.normalize_shop(req.shop_domain)
+        if not norm:
+            raise HTTPException(status_code=400, detail="店铺 handle/域名不正确：填 handle（如 dshopflow）或完整 xxx.myshopify.com")
+        if norm != shop.shop_domain:
+            dup = await db.scalar(select(Shop).where(  # 同团队下域名唯一
+                Shop.team_id == shop.team_id, Shop.shop_domain == norm, Shop.id != shop.id
+            ))
+            if dup:
+                raise HTTPException(status_code=400, detail="该团队下已存在相同域名的店铺")
+            shop.shop_domain = norm
+            need_recheck = True
+    if req.alias is not None:
+        shop.alias = req.alias
+    if req.shop_name is not None:
+        shop.shop_name = req.shop_name
+    if req.custom_domain is not None:
+        shop.custom_domain = req.custom_domain
+    if req.tags is not None:
+        shop.tags = req.tags
+    if req.is_active is not None:
+        shop.is_active = req.is_active
+    if req.access_token:  # 非空才改 token
+        shop.access_token_encrypted = encrypt_secret(req.access_token)
+        need_recheck = True
+
+    if need_recheck:  # 域名或 token 变了 → 重置连接状态待重新检测
+        shop.conn_status = "unknown"
+        shop.conn_checked_at = None
+        shop.conn_error = None
+
+    await db.commit()
+    await db.refresh(shop)
+    return {
+        "id": shop.id, "alias": shop.alias, "shop_domain": shop.shop_domain,
+        "shop_name": shop.shop_name, "custom_domain": shop.custom_domain,
+        "tags": shop.tags, "is_active": shop.is_active, **_conn_fields(shop),
+    }
+
+
+@router.delete("/{shop_id}")
+async def delete_shop(
+    shop_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _: User = require(Permission.MANAGE_SHOPS),
+):
+    shop = await _owned_shop(shop_id, current_user, db)
+    await db.delete(shop)
+    await db.commit()
+    return {"ok": True}
+
+
+# ── Shopify OAuth 接入 ──
+
+@router.get("/oauth/install")
+async def oauth_install(
+    shop: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _: User = require(Permission.MANAGE_SHOPS),
+):
+    """返回 Shopify 授权 URL（前端拿到后跳转）。"""
+    cfg = await platform_settings.get_shopify_config(db)
+    if not cfg["api_key"] or not cfg["app_base_url"]:
+        raise HTTPException(status_code=500, detail="尚未配置 Shopify App（请在『平台设置』填 API key 与回调域名）")
+    if not current_user.team_id:
+        raise HTTPException(status_code=400, detail="你不在任何团队中，无法绑定店铺")
+    norm = oauth.normalize_shop(shop)
+    if not norm:
+        raise HTTPException(status_code=400, detail="店铺域名格式不正确，应形如 xxx.myshopify.com")
+    state = oauth.sign_state(current_user.team_id, current_user.id)
+    url = oauth.build_install_url(
+        norm, state,
+        api_key=cfg["api_key"], scopes=cfg["scopes"], app_base_url=cfg["app_base_url"],
+    )
+    return {"url": url}
+
+
+@router.get("/oauth/callback")
+async def oauth_callback(request: Request):
+    """Shopify 授权后重定向到此（浏览器顶层跳转，无我方 JWT；鉴权靠 state）。
+    校验 hmac + state → 用 code 换 token → upsert 店铺 → 跳回管理后台。"""
+    params = dict(request.query_params)
+    shop = oauth.normalize_shop(params.get("shop", ""))
+    code = params.get("code")
+    state = params.get("state", "")
+
+    # callback 不经过 get_db 依赖：自开会话，先读配置（含 admin_base_url 用于跳转）
+    async with async_session() as db:
+        cfg = await platform_settings.get_shopify_config(db)
+        admin_base = cfg["admin_base_url"]
+
+        if not shop or not code:
+            return _admin_redirect("error=" + quote("缺少 shop 或 code"), admin_base)
+        if not oauth.verify_hmac(params, cfg["api_secret"]):
+            return _admin_redirect("error=" + quote("HMAC 校验失败（请求可能被伪造）"), admin_base)
+        st = oauth.verify_state(state)
+        if not st:
+            return _admin_redirect("error=" + quote("state 无效或已过期，请重新发起授权"), admin_base)
+
+        try:
+            tok = await oauth.exchange_code(shop, code, api_key=cfg["api_key"], api_secret=cfg["api_secret"])
+            access_token = tok.get("access_token")
+            if not access_token:
+                return _admin_redirect("error=" + quote("未取得 access_token"), admin_base)
+        except Exception as e:
+            return _admin_redirect("error=" + quote(f"换取 token 失败: {e}"[:120]), admin_base)
+
+        team_id = st["team_id"]
+        existing = await db.scalar(
+            select(Shop).where(Shop.team_id == team_id, Shop.shop_domain == shop)
+        )
+        if existing:
+            existing.access_token_encrypted = encrypt_secret(access_token)
+            existing.is_active = True
+        else:
+            team = await db.get(Team, team_id)
+            if team is None:
+                return _admin_redirect("error=" + quote("团队不存在"), admin_base)
+            checker = QuotaChecker(team)
+            if not await checker.check_shops(db):
+                return _admin_redirect("error=" + quote("店铺数量已达上限"), admin_base)
+            db.add(Shop(
+                team_id=team_id, created_by=st.get("user_id"),
+                shop_domain=shop, shop_name=shop,
+                access_token_encrypted=encrypt_secret(access_token),
+            ))
+        await db.commit()
+
+    return _admin_redirect("connected=" + quote(shop), admin_base)
+
+
+async def _check_shop_conn(domain: str, token: str) -> dict:
+    """调 Shopify shop.json 检测连接，返回 {status, error, shop_name}（不落库）。"""
+    try:
+        async with httpx.AsyncClient(timeout=12) as client:
+            resp = await client.get(
+                f"https://{domain}/admin/api/2024-01/shop.json",
+                headers={"X-Shopify-Access-Token": token or ""},
+            )
+        if resp.status_code == 200:
+            info = resp.json().get("shop", {})
+            return {"status": "ok", "error": None, "shop_name": info.get("name")}
+        # 401/403 = token 失效/无权；其它给状态码
+        return {"status": "failed", "error": f"HTTP {resp.status_code}", "shop_name": None}
+    except Exception as e:
+        return {"status": "failed", "error": str(e)[:200], "shop_name": None}
+
+
+def _persist_conn(shop: Shop, r: dict) -> None:
+    shop.conn_status = r["status"]
+    # 存 naive UTC（与全库时间一致；读出时统一加 +00:00，避免 aware 双时区后缀致前端 NaN）
+    shop.conn_checked_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    shop.conn_error = r["error"]
+
+
+def _conn_fields(s: Shop) -> dict:
+    return {
+        "conn_status": s.conn_status or "unknown",
+        "conn_checked_at": s.conn_checked_at.isoformat() + "+00:00" if s.conn_checked_at else None,
+        "conn_error": s.conn_error,
+    }
+
+
+async def _team_shops(current_user: User, db: AsyncSession) -> list[Shop]:
+    if current_user.role == "super_admin":
+        return list(await db.scalars(select(Shop)))
+    return list(await db.scalars(select(Shop).where(Shop.team_id == current_user.team_id)))
+
+
+@router.post("/{shop_id}/test")
+async def test_shop_connection(
+    shop_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _: User = require(Permission.MANAGE_SHOPS),
+):
+    """手动检测单个店铺连接（并落库状态）。"""
+    shop = await db.get(Shop, shop_id)
+    if not shop:
+        raise HTTPException(status_code=404, detail="店铺不存在")
+    if current_user.role != "super_admin" and shop.team_id != current_user.team_id:
+        raise HTTPException(status_code=403, detail="无权访问")
+    r = await _check_shop_conn(shop.shop_domain, decrypt_secret(shop.access_token_encrypted) or "")
+    _persist_conn(shop, r)
+    await db.commit()
+    return {"ok": r["status"] == "ok", "shop_name": r["shop_name"], **_conn_fields(shop)}
+
+
+@router.post("/refresh-status")
+async def refresh_status(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _: User = require(Permission.MANAGE_SHOPS),
+):
+    """并发检测当前团队（超管为全部）所有店铺连接，落库并返回各店铺状态。供前端定时刷新。"""
+    shops = await _team_shops(current_user, db)
+    results = await asyncio.gather(
+        *[_check_shop_conn(s.shop_domain, decrypt_secret(s.access_token_encrypted) or "") for s in shops],
+        return_exceptions=True,
+    )
+    for s, r in zip(shops, results):
+        if isinstance(r, dict):
+            _persist_conn(s, r)
+    await db.commit()
+    return [{"id": s.id, **_conn_fields(s)} for s in shops]
+
+
 @router.get("")
 async def list_shops(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if current_user.role == "super_admin":
-        shops = await db.scalars(select(Shop))
-    else:
-        shops = await db.scalars(select(Shop).where(Shop.team_id == current_user.team_id))
+    shops = await _team_shops(current_user, db)
     return [{
         "id": s.id, "team_id": s.team_id,
         "shop_domain": s.shop_domain, "shop_name": s.shop_name,
         "alias": s.alias, "custom_domain": s.custom_domain, "tags": s.tags,
         "is_active": s.is_active,
         "created_at": s.created_at.isoformat() + "+00:00" if s.created_at else None,
+        **_conn_fields(s),
     } for s in shops]

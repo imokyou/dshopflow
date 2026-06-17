@@ -3,6 +3,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.core.security import decode_token
+from app.core.audit import is_token_blacklisted
 from app.models import User
 
 security_scheme = HTTPBearer(auto_error=False)
@@ -18,6 +19,10 @@ async def get_current_user(
         payload = decode_token(credentials.credentials)
         if payload.get("type") != "access":
             raise HTTPException(status_code=401, detail="Invalid token type")
+        # 强制登出/吊销：jti 命中黑名单则拒绝（Redis 不可用时降级放行）
+        jti = payload.get("jti")
+        if jti and is_token_blacklisted(jti):
+            raise HTTPException(status_code=401, detail="Token revoked")
         user_id = payload["sub"]
         user = await db.get(User, user_id)
         if not user:

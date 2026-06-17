@@ -1,6 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import AIProvider
+from app.core.crypto import decrypt_secret
 
 
 class ProviderRouter:
@@ -34,7 +35,7 @@ class ProviderRouter:
 
     async def _call_provider(self, p: AIProvider, prompt: str, images: list[str] | None, **kwargs) -> str:
         import httpx
-        headers = {"Authorization": f"Bearer {p.api_key_encrypted}", "Content-Type": "application/json"}
+        headers = {"Authorization": f"Bearer {decrypt_secret(p.api_key_encrypted)}", "Content-Type": "application/json"}
         payload = {"model": kwargs.get("model") or p.default_model, "messages": [{"role": "user", "content": prompt}]}
         if images:
             payload["messages"][0]["content"] = [{"type": "text", "text": prompt}] + [

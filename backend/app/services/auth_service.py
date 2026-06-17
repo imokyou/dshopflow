@@ -30,6 +30,13 @@ async def register_user(
         )
         if not invitation or invitation.accepted_at:
             raise ValueError("Invalid or expired invitation")
+        # 校验邀请是否过期
+        if invitation.expires_at:
+            expires_at = invitation.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at < datetime.now(timezone.utc):
+                raise ValueError("Invalid or expired invitation")
         team_id = invitation.team_id
         role = invitation.role
         invitation.accepted_at = datetime.now(timezone.utc)

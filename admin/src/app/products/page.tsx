@@ -1,5 +1,5 @@
 "use client"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import Layout from "@/components/layout/Layout"
 import { api } from "@/lib/api"
@@ -24,19 +24,26 @@ export default function ProductsPage() {
   const [statusFilter, setStatusFilter] = useState("")
   const [busy, setBusy] = useState<string>("")
 
+  // 请求序号：丢弃过期（后发先至）响应，避免旧结果覆盖新筛选
+  const reqIdRef = useRef(0)
   const load = useCallback(async () => {
+    const seq = ++reqIdRef.current
     setLoading(true)
     try {
       const params = new URLSearchParams()
       if (statusFilter) params.set("status", statusFilter)
       if (search) params.set("search", search)
       const d: any = await api.getProducts(params.toString())
-      setData(d?.items || [])
-    } catch { setData([]) }
-    setLoading(false)
+      if (seq === reqIdRef.current) setData(d?.items || [])
+    } catch { if (seq === reqIdRef.current) setData([]) }
+    finally { if (seq === reqIdRef.current) setLoading(false) }
   }, [search, statusFilter])
 
-  useEffect(() => { load() }, [load])
+  // 搜索防抖 300ms；筛选变化即时触发
+  useEffect(() => {
+    const t = setTimeout(() => { load() }, 300)
+    return () => clearTimeout(t)
+  }, [load])
 
   const act = async (id: string, fn: () => Promise<any>) => { setBusy(id); try { await fn() } catch (e: any) { alert(e?.message || "操作失败") } setBusy(""); load() }
   const publish = (p: any) => act(p.id, () => api.publishProduct(p.id))
@@ -76,33 +83,50 @@ export default function ProductsPage() {
         <button className="btn btn-ghost btn-sm" onClick={() => load()} disabled={loading}>{loading ? "⏳ 刷新中…" : "🔄 刷新"}</button>
       </div>
 
-      {selected.size > 0 && (
-        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", marginBottom: 8, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 6 }}>
-          <span style={{ fontSize: ".82rem", fontWeight: 600 }}>已选 {selected.size} 项</span>
-          <button className="btn btn-sm" style={{ background: "var(--red)", color: "#fff" }} onClick={() => setDelConfirm([...selected])}>🗑 批量删除</button>
-          <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())}>清除选择</button>
-        </div>
-      )}
+      {/* 批量操作条：固定浮动条，不挤压表格布局 */}
+      <div style={{
+        position: "fixed", left: "50%", bottom: 24, zIndex: 50,
+        transform: `translateX(-50%) translateY(${selected.size > 0 ? "0" : "160%"})`,
+        opacity: selected.size > 0 ? 1 : 0,
+        pointerEvents: selected.size > 0 ? "auto" : "none",
+        transition: "transform .22s cubic-bezier(.4,0,.2,1), opacity .18s ease",
+        display: "flex", alignItems: "center", gap: 12, padding: "10px 16px",
+        background: "#fff", border: "1px solid #fecaca", borderRadius: 10,
+        boxShadow: "0 10px 30px rgba(220,38,38,.18)",
+      }}>
+        <span style={{ fontSize: ".82rem", fontWeight: 600 }}>已选 {selected.size} 项</span>
+        <button className="btn btn-sm" style={{ background: "var(--red)", color: "#fff" }} onClick={() => setDelConfirm([...selected])}>🗑 批量删除</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())}>清除选择</button>
+      </div>
 
       <div className="card">
         <div className="table-wrap">
           <table>
             <thead><tr>
-              <th style={{ width: 34 }}><input type="checkbox" checked={allSelected} onChange={toggleAll} title="全选本页" /></th>
-              <th style={{ width: 50 }}>主图</th><th>商品</th><th style={{ width: 70 }}>价格</th>
+              <th style={{ width: 40, padding: 0 }}>
+                <label style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", minHeight: 38, cursor: "pointer" }} title="全选本页">
+                  <input type="checkbox" checked={allSelected} onChange={toggleAll} style={{ width: 16, height: 16, cursor: "pointer" }} />
+                </label>
+              </th>
+              <th style={{ width: 50 }}>主图</th><th>商品</th><th style={{ width: 110 }}>SPU</th><th style={{ width: 70 }}>价格</th>
               <th style={{ width: 60 }}>库存</th><th style={{ width: 90 }}>状态</th><th style={{ width: 110 }}>Shopify</th>
               <th style={{ width: 130 }}>更新时间</th><th style={{ width: 180 }}>操作</th>
             </tr></thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={9} className="table-empty"><div className="spinner" /></td></tr>
+                <tr><td colSpan={10} className="table-empty"><div className="spinner" /></td></tr>
               ) : data.length === 0 ? (
-                <tr><td colSpan={9} className="table-empty"><div className="empty-icon">📦</div>暂无商品，点击「+ 添加商品」新建</td></tr>
+                <tr><td colSpan={10} className="table-empty"><div className="empty-icon">📦</div>暂无商品，点击「+ 添加商品」新建</td></tr>
               ) : data.map(p => (
-                <tr key={p.id} style={{ cursor: "pointer" }} onClick={() => edit(p.id)}>
-                  <td onClick={e => e.stopPropagation()}><input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSel(p.id)} /></td>
+                <tr key={p.id} style={{ cursor: "pointer", background: selected.has(p.id) ? "#f5f3ff" : undefined }} onClick={() => edit(p.id)}>
+                  <td style={{ padding: 0 }} onClick={e => e.stopPropagation()}>
+                    <label style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", minHeight: 44, cursor: "pointer" }}>
+                      <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSel(p.id)} style={{ width: 16, height: 16, cursor: "pointer" }} />
+                    </label>
+                  </td>
                   <td>{p.image ? <img src={p.image} alt="" style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4 }} onError={e => { (e.target as HTMLImageElement).style.display = "none" }} /> : <span style={{ fontSize: 20 }}>📷</span>}</td>
                   <td><div style={{ fontWeight: 500 }}>{p.title || "未命名"}</div><div style={{ fontSize: ".7rem", color: "var(--gray-400)" }}>{p.variant_count} 个变体 · {p.vendor || "无供应商"}</div></td>
+                  <td style={{ fontFamily: "monospace", fontSize: ".78rem", fontWeight: 600, color: p.spu ? "var(--gray-700)" : "var(--gray-400)" }}>{p.spu || "—"}</td>
                   <td>{p.price != null ? `$${p.price}` : "—"}</td>
                   <td>{p.inventory ?? 0}</td>
                   <td>{BADGE(p.status)}</td>

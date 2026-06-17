@@ -84,8 +84,11 @@ class ImageService:
                 "size": len(content),
             }
         except Exception as e:
-            # 单张失败不中断整批
-            return {"url": url, "error": str(e), "local_path": None, "public_url": url}
+            # 单张失败不中断整批，但绝不能把原始 1688 防盗链 URL 当作可用的 public_url 返回，
+            # 否则下游 Shopify 同步会用到一个拉不到的图。public_url 置 None 并显式标错。
+            import logging
+            logging.getLogger("dropshipflow").warning("image download failed: %s (%s)", url, e)
+            return {"url": url, "error": str(e), "local_path": None, "public_url": None, "failed": True}
 
     async def _copy_to_local(self, src_path: str, filename: str) -> str:
         """复制到本地存储目录"""

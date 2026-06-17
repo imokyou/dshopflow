@@ -1,9 +1,11 @@
 "use client"
 export const dynamic = "force-dynamic"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import Layout from "@/components/layout/Layout"
 import { api } from "@/lib/api"
+import { sanitizeHtml } from "@/lib/sanitize"
+import { toast, toastError } from "@/lib/toast"
 
 type PoolItem = any
 type Team = { id: string; name: string }
@@ -71,7 +73,10 @@ export default function ProductPoolPage() {
     api.getMe().then(setMe).catch(() => { })
   }, [])
 
+  // 请求序号：丢弃过期（后发先至）响应
+  const reqIdRef = useRef(0)
   const load = useCallback(async (p?: number) => {
+    const seq = ++reqIdRef.current
     setLoading(true)
     try {
       const params = new URLSearchParams()
@@ -81,20 +86,23 @@ export default function ProductPoolPage() {
       if (statusFilter) params.set("status", statusFilter)
       if (transferFilter) params.set("transferred", transferFilter)
       const d = await api.getProductPool(params.toString()) as any
-      setData(d.items || [])
-      setTotal(d.total || 0)
-    } catch { }
-    setLoading(false)
+      if (seq === reqIdRef.current) { setData(d.items || []); setTotal(d.total || 0) }
+    } catch (e) { if (seq === reqIdRef.current) toastError(e, "加载选品池失败") }
+    finally { if (seq === reqIdRef.current) setLoading(false) }
   }, [page, search, statusFilter, transferFilter])
 
-  useEffect(() => { load() }, [load])
+  // 搜索防抖 300ms；页码/筛选变化经 load 依赖触发
+  useEffect(() => {
+    const t = setTimeout(() => { load() }, 300)
+    return () => clearTimeout(t)
+  }, [load])
 
   const openDetail = async (id: string) => {
     setDetailLoading(true); setDetail(null)
     try {
       const d = await api.getProductPoolItem(id) as any
       setDetail(d)
-    } catch { }
+    } catch (e) { toastError(e, "加载详情失败") }
     setDetailLoading(false)
   }
 
@@ -115,21 +123,43 @@ export default function ProductPoolPage() {
     } catch (e: any) { setCaptureError(e.message) }
   }
 
-  // Actions
+  // Actions —— busy 集合用于按钮防重复点击（S2-11）
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set())
+  const setBusy = (id: string, on: boolean) =>
+    setBusyIds(s => { const n = new Set(s); on ? n.add(id) : n.delete(id); return n })
+
   const doTranslate = async (id: string) => {
-    await api.triggerTranslate(id, "en")
-    setTimeout(() => load(), 2000)
-    setTimeout(() => { if (detail?.id === id) openDetail(id) }, 3000)
+    if (busyIds.has(id)) return
+    setBusy(id, true)
+    try {
+      await api.triggerTranslate(id, "en")
+      toast("已触发翻译", "success")
+      setTimeout(() => load(), 2000)
+      setTimeout(() => { if (detail?.id === id) openDetail(id) }, 3000)
+    } catch (e) { toastError(e, "翻译触发失败") }
+    finally { setBusy(id, false) }
   }
   const doPricing = async (id: string) => {
-    await api.triggerPricing(id)
-    setTimeout(() => load(), 2000)
-    setTimeout(() => { if (detail?.id === id) openDetail(id) }, 3000)
+    if (busyIds.has(id)) return
+    setBusy(id, true)
+    try {
+      await api.triggerPricing(id)
+      toast("已触发定价", "success")
+      setTimeout(() => load(), 2000)
+      setTimeout(() => { if (detail?.id === id) openDetail(id) }, 3000)
+    } catch (e) { toastError(e, "定价触发失败") }
+    finally { setBusy(id, false) }
   }
   const doDelete = async (id: string) => {
     if (!confirm("确定删除？")) return
-    await api.deleteProductPoolItem(id)
-    load()
+    if (busyIds.has(id)) return
+    setBusy(id, true)
+    try {
+      await api.deleteProductPoolItem(id)
+      toast("已删除", "success")
+      load()
+    } catch (e) { toastError(e, "删除失败") }
+    finally { setBusy(id, false) }
   }
   // 转入商品管理：选择 + 二次确认 + 结果弹框
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -217,18 +247,25 @@ export default function ProductPoolPage() {
           <option value="true">已转入</option>
           <option value="false">未转入</option>
         </select>
-        <button className="btn btn-ghost btn-sm" onClick={() => { setSearch(""); setStatusFilter(""); setTransferFilter(""); setPage(1); setTimeout(load, 50) }}>清除筛选</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => { setSearch(""); setStatusFilter(""); setTransferFilter(""); setPage(1) }}>清除筛选</button>
         <button className="btn btn-ghost btn-sm" onClick={() => load()} disabled={loading} title="刷新列表">{loading ? "⏳ 刷新中…" : "🔄 刷新"}</button>
       </div>
 
-      {/* 批量操作条 */}
-      {selected.size > 0 && (
-        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", marginBottom: 8, background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: 6 }}>
-          <span style={{ fontSize: ".82rem", fontWeight: 600 }}>已选 {selected.size} 项</span>
-          <button className="btn btn-primary btn-sm" onClick={() => setConfirmIds([...selected])}>📦 批量转入商品管理</button>
-          <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())}>清除选择</button>
-        </div>
-      )}
+      {/* 批量操作条：固定浮动条，不挤压表格布局，选中时滑入 */}
+      <div style={{
+        position: "fixed", left: "50%", bottom: 24, zIndex: 50,
+        transform: `translateX(-50%) translateY(${selected.size > 0 ? "0" : "160%"})`,
+        opacity: selected.size > 0 ? 1 : 0,
+        pointerEvents: selected.size > 0 ? "auto" : "none",
+        transition: "transform .22s cubic-bezier(.4,0,.2,1), opacity .18s ease",
+        display: "flex", alignItems: "center", gap: 12, padding: "10px 16px",
+        background: "#fff", border: "1px solid #c7d2fe", borderRadius: 10,
+        boxShadow: "0 10px 30px rgba(79,70,229,.22)",
+      }}>
+        <span style={{ fontSize: ".82rem", fontWeight: 600 }}>已选 {selected.size} 项</span>
+        <button className="btn btn-primary btn-sm" onClick={() => setConfirmIds([...selected])}>📦 批量转入商品管理</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())}>清除选择</button>
+      </div>
 
       {/* Table */}
       <div className="card">
@@ -236,7 +273,11 @@ export default function ProductPoolPage() {
           <table>
             <thead>
               <tr>
-                <th style={{ width: 34 }}><input type="checkbox" checked={allSelected} onChange={toggleAll} title="全选本页" /></th>
+                <th style={{ width: 40, padding: 0 }}>
+                  <label style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", minHeight: 38, cursor: "pointer" }} title="全选本页">
+                    <input type="checkbox" checked={allSelected} onChange={toggleAll} style={{ width: 16, height: 16, cursor: "pointer" }} />
+                  </label>
+                </th>
                 <th style={{ width: 50 }}>主图</th>
                 <th>商品标题</th>
                 <th style={{ width: 60 }}>SKU</th>
@@ -244,17 +285,20 @@ export default function ProductPoolPage() {
                 <th style={{ width: 80 }}>售价</th>
                 <th style={{ width: 90 }}>状态</th>
                 <th style={{ width: 80 }}>转入</th>
-                <th style={{ width: 130 }}>抓取时间</th>
+                <th style={{ width: 100 }}>SPU</th>
+                <th style={{ width: 130 }}>更新时间</th>
                 <th style={{ width: 250 }}>操作</th>
               </tr>
             </thead>
             <tbody>
               {data.length === 0 ? (
-                <tr><td colSpan={10} className="table-empty"><div className="empty-icon">🏊</div>暂无商品，点击「手动抓取」模拟 1688 抓取</td></tr>
+                <tr><td colSpan={11} className="table-empty"><div className="empty-icon">🏊</div>暂无商品，点击「手动抓取」模拟 1688 抓取</td></tr>
               ) : data.map(r => (
-                <tr key={r.id} style={{ cursor: "pointer" }} onClick={() => openDetail(r.id)}>
-                  <td onClick={e => e.stopPropagation()}>
-                    <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSel(r.id)} />
+                <tr key={r.id} style={{ cursor: "pointer", background: selected.has(r.id) ? "#f5f3ff" : undefined }} onClick={() => openDetail(r.id)}>
+                  <td style={{ padding: 0 }} onClick={e => e.stopPropagation()}>
+                    <label style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", minHeight: 44, cursor: "pointer" }}>
+                      <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSel(r.id)} style={{ width: 16, height: 16, cursor: "pointer" }} />
+                    </label>
                   </td>
                   <td>
                     {r.main_image_url ? (
@@ -276,8 +320,11 @@ export default function ProductPoolPage() {
                       ? <span style={{ fontSize: ".72rem", color: "#15803d", background: "#dcfce7", padding: "2px 8px", borderRadius: 10, fontWeight: 600, whiteSpace: "nowrap" }}>✅ 已转入</span>
                       : <span style={{ fontSize: ".72rem", color: "var(--gray-400)", whiteSpace: "nowrap" }}>未转入</span>}
                   </td>
+                  <td style={{ fontFamily: "monospace", fontSize: ".75rem", fontWeight: 600, color: r.spu ? "var(--gray-700)" : "var(--gray-400)", whiteSpace: "nowrap" }}>
+                    {r.spu || "—"}
+                  </td>
                   <td style={{ fontSize: ".72rem", color: "var(--gray-500)", whiteSpace: "nowrap" }}>
-                    {r.created_at ? new Date(r.created_at).toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}
+                    {r.updated_at ? new Date(r.updated_at).toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}
                   </td>
                   <td onClick={e => e.stopPropagation()}>
                     <div style={{ display: "flex", gap: 8, flexWrap: "nowrap", whiteSpace: "nowrap", fontSize: ".78rem" }}>
@@ -295,9 +342,9 @@ export default function ProductPoolPage() {
         </div>
         {total > 50 && (
           <div style={{ display: "flex", justifyContent: "center", gap: 8, padding: 8 }}>
-            <button className="btn btn-ghost btn-sm" disabled={page <= 1} onClick={() => { setPage(p => p - 1); setTimeout(load, 50) }}>上一页</button>
+            <button className="btn btn-ghost btn-sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>上一页</button>
             <span style={{ fontSize: ".8rem", color: "var(--gray-500)", alignSelf: "center" }}>{page} / {Math.ceil(total / 50)}</span>
-            <button className="btn btn-ghost btn-sm" disabled={page * 50 >= total} onClick={() => { setPage(p => p + 1); setTimeout(load, 50) }}>下一页</button>
+            <button className="btn btn-ghost btn-sm" disabled={page * 50 >= total} onClick={() => setPage(p => p + 1)}>下一页</button>
           </div>
         )}
       </div>
@@ -334,7 +381,7 @@ export default function ProductPoolPage() {
               <div className="form-group"><label>成本价</label><div style={{ fontSize: ".82rem" }}>¥{detail.cost_price || "—"}</div></div>
               <div className="form-group" style={{ gridColumn: "1/-1" }}><label>描述</label>
                 <div style={{ fontSize: ".78rem", background: "#f9fafb", padding: 8, borderRadius: 4, lineHeight: 1.5 }}
-                  dangerouslySetInnerHTML={{ __html: detail.detail?.desc_cn || "—" }} />
+                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(detail.detail?.desc_cn) || "—" }} />
               </div>
             </div>
             {detail.detail?.attrs?.length > 0 && (
@@ -398,7 +445,7 @@ export default function ProductPoolPage() {
                   <strong style={{ fontSize: ".8rem" }}>[{t.language.toUpperCase()}] {t.title}</strong>
                   <button className="btn btn-ghost btn-sm" onClick={() => setEditTrans({ ...t, pool_id: detail.id })}>✏️ 编辑</button>
                 </div>
-                <div style={{ fontSize: ".75rem", lineHeight: 1.5, maxHeight: 80, overflow: "auto" }} dangerouslySetInnerHTML={{ __html: t.description || "" }} />
+                <div style={{ fontSize: ".75rem", lineHeight: 1.5, maxHeight: 80, overflow: "auto" }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(t.description) }} />
                 {t.bullet_points?.length > 0 && (
                   <ul style={{ fontSize: ".73rem", margin: "4px 0 0 16px", color: "var(--gray-600)" }}>
                     {t.bullet_points.map((bp: string, i: number) => <li key={i}>{bp}</li>)}

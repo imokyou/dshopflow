@@ -31,10 +31,19 @@ export function getToken(): string | null {
   return token
 }
 
+// 确保 refreshToken 已从 localStorage 加载（修复首个 401 时内存值仍为 null 的时序缺口）
+function getRefreshToken(): string | null {
+  if (refreshToken) return refreshToken
+  if (typeof window !== "undefined") {
+    refreshToken = localStorage.getItem("refresh_token")
+  }
+  return refreshToken
+}
+
 export function isLoggedIn() { return !!getToken() }
 
 async function refreshAccessToken(): Promise<string | null> {
-  if (!refreshToken) return null
+  if (!getRefreshToken()) return null
   // Prevent concurrent refresh calls
   if (refreshPromise) return refreshPromise
   
@@ -67,8 +76,8 @@ async function request<T = any>(method: string, path: string, body?: any): Promi
 
   let resp = await fetch(`${API}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined })
 
-  // Auto-refresh on 401
-  if (resp.status === 401 && refreshToken) {
+  // Auto-refresh on 401（确保 refreshToken 已从 localStorage 加载）
+  if (resp.status === 401 && getRefreshToken()) {
     const newToken = await refreshAccessToken()
     if (newToken) {
       headers["Authorization"] = `Bearer ${newToken}`
@@ -110,6 +119,7 @@ export const api = {
   createSpuRule: (data: any) => request("POST", "/spu-rules", data),
   updateSpuRule: (id: string, data: any) => request("PUT", `/spu-rules/${id}`, data),
   deleteSpuRule: (id: string) => request("DELETE", `/spu-rules/${id}`),
+  generateSpu: (spu_rule_id: string, product_id?: string) => request("POST", "/products/generate-spu", { spu_rule_id, product_id }),
   updateProduct: (id: string, data: any) => request("PUT", `/products/${id}`, data),
   deleteProduct: (id: string) => request("DELETE", `/products/${id}`),
   publishProduct: (id: string) => request("POST", `/products/${id}/publish`),
@@ -131,6 +141,11 @@ export const api = {
   // Shops
   getShops: (teamId?: string) => request("GET", `/shops${teamId ? `?team_id=${teamId}` : ""}`),
   createShop: (data: any) => request("POST", "/shops", data),
+  shopifyInstallUrl: (shop: string) => request<{ url: string }>("GET", `/shops/oauth/install?shop=${encodeURIComponent(shop)}`),
+  testShop: (id: string) => request("POST", `/shops/${id}/test`),
+  refreshShopStatus: () => request<any[]>("POST", "/shops/refresh-status"),
+  updateShop: (id: string, data: any) => request("PUT", `/shops/${id}`, data),
+  deleteShop: (id: string) => request("DELETE", `/shops/${id}`),
 
 
   // Imports
@@ -156,6 +171,8 @@ export const api = {
   toggleQuotaRuleActive: (id: string) => request("PUT", `/admin/quota-rules/${id}/toggle-active`),
   getAIProviders: () => request("GET", "/admin/ai-providers"),
   createAIProvider: (data: any) => request("POST", "/admin/ai-providers", data),
+  getPlatformSettings: () => request("GET", "/admin/platform-settings"),
+  updatePlatformSettings: (data: any) => request("PUT", "/admin/platform-settings", data),
   updateAIProvider: (id: string, data: any) => request("PUT", `/admin/ai-providers/${id}`, data),
   toggleAIProviderActive: (id: string) => request("PUT", `/admin/ai-providers/${id}/toggle-active`),
   fetchModels: (api_base_url: string, api_key: string, provider_id?: string) =>
@@ -181,4 +198,9 @@ export const api = {
   updatePrice: (id: string, data: any) => request("PUT", `/product-pool/${id}/price`, data),
   getTaskLogs: (id: string, taskType?: string) => request("GET", `/product-pool/${id}/tasks${taskType ? `?task_type=${taskType}` : ""}`),
   retryTask: (poolId: string, taskId: string) => request("POST", `/product-pool/${poolId}/tasks/${taskId}/retry`),
+
+  // 素材库
+  getMaterials: (params?: string) => request("GET", `/materials${params ? `?${params}` : ""}`),
+  updateMaterial: (id: string, data: any) => request("PUT", `/materials/${id}`, data),
+  regenerateMaterial: (id: string) => request("POST", `/materials/${id}/regenerate`),
 }

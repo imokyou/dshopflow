@@ -13,6 +13,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
+    allow_origin_regex=settings.CORS_ORIGIN_REGEX,  # 正确匹配 chrome-extension:// 来源
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -32,7 +33,8 @@ async def _startup_migrate():
         from app.api.v1.products import resume_pending_jobs
         await resume_pending_jobs()
     except Exception:
-        pass
+        import logging
+        logging.getLogger("dropshipflow").exception("resume_pending_jobs failed on startup")
 
 
 @app.get("/health")

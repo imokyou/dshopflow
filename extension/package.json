@@ -1,29 +1,11 @@
 {
   "name": "dropshipflow-extension",
   "displayName": "DropShipFlow — 1688 to Shopify",
-  "version": "0.1.0",
-  "description": "One-click import products from 1688 to Shopify",
+  "version": "0.2.0",
+  "description": "1688 商品一键抓取到 DropShipFlow 选品池",
   "author": "DropShipFlow",
+  "private": true,
   "scripts": {
-    "dev": "plasmo dev",
-    "build": "plasmo build",
-    "package": "plasmo package"
-  },
-  "dependencies": {
-    "plasmo": "^0.89.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
-  },
-  "devDependencies": {
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
-    "typescript": "^5.3.0",
-    "prettier": "^3.0.0"
-  },
-  "manifest": {
-    "host_permissions": ["*://detail.1688.com/*", "*://api.dropshipflow.com/*"],
-    "externally_connectable": {
-      "matches": ["https://admin.dropshipflow.com/*"]
-    }
+    "check": "node --check background.js && node --check content.js && node --check popup.js && node --check config.js"
   }
 }

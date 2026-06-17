@@ -1,16 +1,17 @@
 """选品池 API — V2 分段管道入口"""
 import json
-import threading
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, exists
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 from pydantic import BaseModel
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models import User, ProductPool, ProductDetail, ProductTranslation, TaskLog, Product
 from app.core.permissions import require, Permission
+from app.core import worker
 
 router = APIRouter(prefix="/product-pool", tags=["product-pool"])
 
@@ -74,7 +75,14 @@ async def capture_product(
     db: AsyncSession = Depends(get_db),
     _: User = require(Permission.IMPORT_PRODUCT),
 ):
-    team_id = req.team_id
+    # 防 IDOR：普通用户只能写入自己团队，忽略请求体里的 team_id；
+    # 仅 super_admin 可显式指定目标团队。
+    if current_user.role == "super_admin":
+        team_id = req.team_id or current_user.team_id
+    else:
+        team_id = current_user.team_id
+    if not team_id:
+        raise HTTPException(status_code=400, detail="当前用户未归属团队，无法入池")
 
     existing = await db.scalar(
         select(ProductPool).where(
@@ -84,30 +92,7 @@ async def capture_product(
     )
 
     if existing:
-        existing.source_url = req.source_url or existing.source_url
-        existing.title_cn = req.title_cn or existing.title_cn
-        existing.main_image_url = req.main_image_url or existing.main_image_url
-        existing.cost_price = req.cost_price
-        existing.sku_count = req.sku_count
-        existing.image_count = req.image_count
-        existing.status = "captured"
-        existing.error_message = None
-
-        detail = await db.scalar(
-            select(ProductDetail).where(ProductDetail.product_pool_id == existing.id)
-        )
-        if detail:
-            if req.desc_cn:
-                detail.desc_cn = req.desc_cn
-            if req.images:
-                detail.images = req.images
-            if req.skus:
-                detail.skus = req.skus
-            if req.attrs:
-                detail.attrs = req.attrs
-
-        await db.commit()
-        await db.refresh(existing)
+        await _apply_capture_update(db, existing, req)
         return {"id": existing.id, "offer_id": existing.offer_id, "status": existing.status, "updated": True}
 
     pool = ProductPool(
@@ -118,17 +103,57 @@ async def capture_product(
         status="captured",
     )
     db.add(pool)
-    await db.flush()
+    try:
+        await db.flush()
+        detail = ProductDetail(
+            product_pool_id=pool.id,
+            desc_cn=req.desc_cn, images=req.images, skus=req.skus, attrs=req.attrs,
+        )
+        db.add(detail)
+        await db.commit()
+        await db.refresh(pool)
+        return {"id": pool.id, "offer_id": pool.offer_id, "status": pool.status, "updated": False}
+    except IntegrityError:
+        # 并发竞态：另一请求已抢先插入同 (team_id, offer_id) → 回滚后转为更新
+        await db.rollback()
+        existing = await db.scalar(
+            select(ProductPool).where(
+                ProductPool.team_id == team_id,
+                ProductPool.offer_id == req.offer_id,
+            )
+        )
+        if not existing:
+            raise
+        await _apply_capture_update(db, existing, req)
+        return {"id": existing.id, "offer_id": existing.offer_id, "status": existing.status, "updated": True}
 
-    detail = ProductDetail(
-        product_pool_id=pool.id,
-        desc_cn=req.desc_cn, images=req.images, skus=req.skus, attrs=req.attrs,
+
+async def _apply_capture_update(db: AsyncSession, existing: ProductPool, req: "ProductCaptureRequest") -> None:
+    """将抓取请求覆盖更新到已存在的选品池记录（含 detail）。"""
+    existing.source_url = req.source_url or existing.source_url
+    existing.title_cn = req.title_cn or existing.title_cn
+    existing.main_image_url = req.main_image_url or existing.main_image_url
+    existing.cost_price = req.cost_price
+    existing.sku_count = req.sku_count
+    existing.image_count = req.image_count
+    existing.status = "captured"
+    existing.error_message = None
+
+    detail = await db.scalar(
+        select(ProductDetail).where(ProductDetail.product_pool_id == existing.id)
     )
-    db.add(detail)
-    await db.commit()
-    await db.refresh(pool)
+    if detail:
+        if req.desc_cn:
+            detail.desc_cn = req.desc_cn
+        if req.images:
+            detail.images = req.images
+        if req.skus:
+            detail.skus = req.skus
+        if req.attrs:
+            detail.attrs = req.attrs
 
-    return {"id": pool.id, "offer_id": pool.offer_id, "status": pool.status, "updated": False}
+    await db.commit()
+    await db.refresh(existing)
 
 
 @router.get("")
@@ -167,12 +192,22 @@ async def list_pool(
     stmt = stmt.order_by(ProductPool.updated_at.desc()).offset((page - 1) * page_size).limit(page_size)
     rows = list(await db.scalars(stmt))
 
-    # 批量查出本页哪些已转入
+    # 批量查出本页哪些已转入，并带回其商品 SPU（取最新转入的那条）
     ids = [r.id for r in rows]
     transferred_ids: set[str] = set()
+    spu_by_pool: dict[str, str] = {}
     if ids:
-        res = await db.scalars(select(Product.source_pool_id).where(Product.source_pool_id.in_(ids)))
-        transferred_ids = {x for x in res if x}
+        res = await db.execute(
+            select(Product.source_pool_id, Product.spu, Product.created_at)
+            .where(Product.source_pool_id.in_(ids))
+            .order_by(Product.created_at.asc())
+        )
+        for pool_id, spu, _created in res:
+            if not pool_id:
+                continue
+            transferred_ids.add(pool_id)
+            if spu:
+                spu_by_pool[pool_id] = spu  # 升序遍历，最后写入=最新
 
     return {
         "items": [
@@ -181,7 +216,7 @@ async def list_pool(
                 "main_image_url": r.main_image_url, "cost_price": r.cost_price, "sku_count": r.sku_count,
                 "image_count": r.image_count, "final_price": r.final_price, "compare_at_price": r.compare_at_price,
                 "pricing_rule_name": r.pricing_rule_name, "status": r.status, "error_message": r.error_message,
-                "transferred": r.id in transferred_ids,
+                "transferred": r.id in transferred_ids, "spu": spu_by_pool.get(r.id),
                 "created_at": (r.created_at.isoformat() + "+00:00") if r.created_at else None,
                 "updated_at": (r.updated_at.isoformat() + "+00:00") if r.updated_at else None,
             }
@@ -211,6 +246,12 @@ async def get_pool_detail(
 
     def ts(dt): return (dt.isoformat() + "+00:00") if dt else None
 
+    # 已转入商品的 SPU（取最新转入的一条）
+    transferred_product = await db.scalar(
+        select(Product).where(Product.source_pool_id == pool.id)
+        .order_by(Product.created_at.desc()).limit(1)
+    )
+
     return {
         "id": pool.id, "team_id": pool.team_id, "offer_id": pool.offer_id, "source_url": pool.source_url,
         "title_cn": pool.title_cn, "main_image_url": pool.main_image_url, "cost_price": pool.cost_price,
@@ -218,6 +259,8 @@ async def get_pool_detail(
         "final_price": pool.final_price, "compare_at_price": pool.compare_at_price,
         "pricing_rule_name": pool.pricing_rule_name, "exchange_rate": pool.exchange_rate, "markup": pool.markup,
         "status": pool.status, "error_message": pool.error_message,
+        "spu": transferred_product.spu if transferred_product else None,
+        "transferred_product_id": transferred_product.id if transferred_product else None,
         "created_at": ts(pool.created_at), "updated_at": ts(pool.updated_at),
         "detail": {
             "desc_cn": pool.detail.desc_cn,
@@ -298,79 +341,81 @@ def _parse_translation_result(result: str, title_cn: str, desc_cn: str) -> dict:
     }
 
 
-def _run_translation(pool_id: str, language: str):
-    """在独立线程中执行翻译"""
-    from app.database import async_session
+async def process_translation_log(db: AsyncSession, log: TaskLog):
+    """处理一条已认领（running）的翻译任务。由后台 worker 调用，复用其 db 会话。"""
+    from app.integrations.llm.provider_router import ProviderRouter
 
-    async def _do():
-        async with async_session() as db:
-            from app.integrations.llm.provider_router import ProviderRouter
+    pool_id = log.product_pool_id
+    language = log.language or "en"
+    pool = await db.get(ProductPool, pool_id)
+    if not pool:
+        log.status = "failed"
+        log.message = "选品池商品已不存在"
+        log.completed_at = datetime.now(timezone.utc)
+        await db.commit()
+        return
 
-            pool = await db.get(ProductPool, pool_id)
-            if not pool:
-                return
+    pool.status = "translating"
+    await db.flush()
 
-            # Create task log
-            log = TaskLog(product_pool_id=pool_id, task_type="translate", status="running", language=language,
-                          started_at=datetime.now(timezone.utc))
-            db.add(log)
+    try:
+        detail = await db.scalar(select(ProductDetail).where(ProductDetail.product_pool_id == pool_id))
+        title_cn = pool.title_cn or ""
+        desc_cn = detail.desc_cn if detail else ""
 
-            # Update pool status
-            pool.status = "translating"
-            await db.flush()
-
+        if not title_cn and not desc_cn:
+            translated = {"title": title_cn, "description": desc_cn, "bullet_points": []}
+        else:
+            router = ProviderRouter(category="text")
+            prompt = _build_translation_prompt(title_cn, desc_cn, language)
             try:
-                detail = await db.scalar(select(ProductDetail).where(ProductDetail.product_pool_id == pool_id))
-                title_cn = pool.title_cn or ""
-                desc_cn = detail.desc_cn if detail else ""
-
-                if not title_cn and not desc_cn:
-                    translated = {"title": title_cn, "description": desc_cn, "bullet_points": []}
-                else:
-                    router = ProviderRouter(category="text")
-                    prompt = _build_translation_prompt(title_cn, desc_cn, language)
-                    try:
-                        raw = await router.call(db, prompt)
-                        translated = _parse_translation_result(raw, title_cn, desc_cn)
-                    except Exception as e:
-                        translated = {"title": title_cn, "description": desc_cn, "bullet_points": [],
-                                      "translation_error": str(e)}
-
-                # Upsert translation
-                existing = await db.scalar(
-                    select(ProductTranslation).where(
-                        ProductTranslation.product_pool_id == pool_id,
-                        ProductTranslation.language == language,
-                    )
-                )
-                if existing:
-                    existing.title = translated["title"]
-                    existing.description = translated["description"]
-                    existing.bullet_points = translated.get("bullet_points", [])
-                else:
-                    t = ProductTranslation(
-                        product_pool_id=pool_id, language=language,
-                        title=translated["title"], description=translated["description"],
-                        bullet_points=translated.get("bullet_points", []),
-                    )
-                    db.add(t)
-
-                # Update log
-                log.status = "completed"
-                log.result = translated
-                log.completed_at = datetime.now(timezone.utc)
-                pool.status = "translated"
-
+                raw = await router.call(db, prompt)
+                translated = _parse_translation_result(raw, title_cn, desc_cn)
             except Exception as e:
-                log.status = "failed"
-                log.message = str(e)
-                pool.status = "captured"
-                pool.error_message = str(e)
+                translated = {"title": title_cn, "description": desc_cn, "bullet_points": [],
+                              "translation_error": str(e)}
 
-            await db.commit()
+        # Upsert translation
+        existing = await db.scalar(
+            select(ProductTranslation).where(
+                ProductTranslation.product_pool_id == pool_id,
+                ProductTranslation.language == language,
+            )
+        )
+        if existing:
+            existing.title = translated["title"]
+            existing.description = translated["description"]
+            existing.bullet_points = translated.get("bullet_points", [])
+        else:
+            t = ProductTranslation(
+                product_pool_id=pool_id, language=language,
+                title=translated["title"], description=translated["description"],
+                bullet_points=translated.get("bullet_points", []),
+            )
+            db.add(t)
 
-    asyncio = __import__("asyncio")
-    asyncio.run(_do())
+        log.status = "completed"
+        log.result = translated
+        log.completed_at = datetime.now(timezone.utc)
+        pool.status = "translated"
+
+    except Exception as e:
+        log.status = "failed"
+        log.message = str(e)
+        pool.status = "captured"
+        pool.error_message = str(e)
+
+    await db.commit()
+
+
+async def _enqueue_pool_task(db: AsyncSession, pool_id: str, task_type: str, language: str | None = None) -> TaskLog:
+    """创建一条 pending 任务日志入队，并把选品池状态置为进行中。"""
+    log = TaskLog(product_pool_id=pool_id, task_type=task_type, status="pending", language=language)
+    db.add(log)
+    pool = await db.get(ProductPool, pool_id)
+    if pool:
+        pool.status = "translating" if task_type == "translate" else "pricing"
+    return log
 
 
 @router.post("/{pool_id}/translate", status_code=202)
@@ -387,9 +432,10 @@ async def trigger_translate(
     if current_user.role != "super_admin" and pool.team_id != current_user.team_id:
         raise HTTPException(status_code=403)
 
-    thread = threading.Thread(target=lambda: _run_translation(pool_id, req.language), daemon=True)
-    thread.start()
-    return {"message": f"Translation to {req.language} started", "pool_id": pool_id}
+    await _enqueue_pool_task(db, pool_id, "translate", req.language)
+    await db.commit()
+    worker.notify()
+    return {"message": f"Translation to {req.language} queued", "pool_id": pool_id}
 
 
 @router.put("/{pool_id}/translate/{lang}")
@@ -426,67 +472,66 @@ async def batch_translate(
     db: AsyncSession = Depends(get_db),
     _: User = require(Permission.IMPORT_PRODUCT),
 ):
+    queued = 0
     for pid in req.ids:
         pool = await db.get(ProductPool, pid)
         if not pool:
             continue
         if current_user.role != "super_admin" and pool.team_id != current_user.team_id:
             continue
-        thread = threading.Thread(target=lambda p=pid, l=req.language: _run_translation(p, l), daemon=True)
-        thread.start()
-
-    return {"message": f"Batch translation started for {len(req.ids)} items"}
+        await _enqueue_pool_task(db, pid, "translate", req.language)
+        queued += 1
+    await db.commit()
+    worker.notify()
+    return {"message": f"Batch translation queued for {queued} items"}
 
 
 # ═══════════════════════════════════════════
 # 定价（分段1）
 # ═══════════════════════════════════════════
 
-def _run_pricing(pool_id: str):
-    import asyncio as _asyncio
-    from app.database import async_session
+async def process_pricing_log(db: AsyncSession, log: TaskLog):
+    """处理一条已认领（running）的定价任务。由后台 worker 调用，复用其 db 会话。"""
     from app.services.pricing_service import PricingEngine
 
-    async def _do():
-        async with async_session() as db:
-            pool = await db.get(ProductPool, pool_id)
-            if not pool:
-                return
+    pool_id = log.product_pool_id
+    pool = await db.get(ProductPool, pool_id)
+    if not pool:
+        log.status = "failed"
+        log.message = "选品池商品已不存在"
+        log.completed_at = datetime.now(timezone.utc)
+        await db.commit()
+        return
 
-            log = TaskLog(product_pool_id=pool_id, task_type="pricing", status="running",
-                          started_at=datetime.now(timezone.utc))
-            db.add(log)
-            pool.status = "pricing"
-            await db.flush()
+    pool.status = "pricing"
+    await db.flush()
 
-            try:
-                detail = await db.scalar(select(ProductDetail).where(ProductDetail.product_pool_id == pool_id))
-                skus = detail.skus if detail else []
+    try:
+        detail = await db.scalar(select(ProductDetail).where(ProductDetail.product_pool_id == pool_id))
+        skus = detail.skus if detail else []
 
-                engine = PricingEngine(pool.team_id)
-                await engine.load_rules(db)
-                base, sku_results = engine.calculate_skus(skus)
+        engine = PricingEngine(pool.team_id)
+        await engine.load_rules(db)
+        base, sku_results = engine.calculate_skus(skus)
 
-                pool.final_price = base.get("final_price")
-                pool.compare_at_price = base.get("compare_at_price")
-                pool.pricing_rule_name = base.get("rule_name")
-                pool.exchange_rate = engine.exchange_rate
-                pool.markup = base.get("markup")
-                pool.status = "priced"
+        pool.final_price = base.get("final_price")
+        pool.compare_at_price = base.get("compare_at_price")
+        pool.pricing_rule_name = base.get("rule_name")
+        pool.exchange_rate = engine.exchange_rate
+        pool.markup = base.get("markup")
+        pool.status = "priced"
 
-                log.status = "completed"
-                log.result = {"base": base, "skus": sku_results}
-                log.completed_at = datetime.now(timezone.utc)
+        log.status = "completed"
+        log.result = {"base": base, "skus": sku_results}
+        log.completed_at = datetime.now(timezone.utc)
 
-            except Exception as e:
-                log.status = "failed"
-                log.message = str(e)
-                pool.status = "captured"
-                pool.error_message = str(e)
+    except Exception as e:
+        log.status = "failed"
+        log.message = str(e)
+        pool.status = "captured"
+        pool.error_message = str(e)
 
-            await db.commit()
-
-    _asyncio.run(_do())
+    await db.commit()
 
 
 @router.post("/{pool_id}/price", status_code=202)
@@ -502,9 +547,10 @@ async def trigger_pricing(
     if current_user.role != "super_admin" and pool.team_id != current_user.team_id:
         raise HTTPException(status_code=403)
 
-    thread = threading.Thread(target=lambda: _run_pricing(pool_id), daemon=True)
-    thread.start()
-    return {"message": "Pricing started", "pool_id": pool_id}
+    await _enqueue_pool_task(db, pool_id, "pricing")
+    await db.commit()
+    worker.notify()
+    return {"message": "Pricing queued", "pool_id": pool_id}
 
 
 @router.put("/{pool_id}/price")
@@ -543,16 +589,18 @@ async def batch_pricing(
     db: AsyncSession = Depends(get_db),
     _: User = require(Permission.IMPORT_PRODUCT),
 ):
+    queued = 0
     for pid in req.ids:
         pool = await db.get(ProductPool, pid)
         if not pool:
             continue
         if current_user.role != "super_admin" and pool.team_id != current_user.team_id:
             continue
-        thread = threading.Thread(target=lambda p=pid: _run_pricing(p), daemon=True)
-        thread.start()
-
-    return {"message": f"Batch pricing started for {len(req.ids)} items"}
+        await _enqueue_pool_task(db, pid, "pricing")
+        queued += 1
+    await db.commit()
+    worker.notify()
+    return {"message": f"Batch pricing queued for {queued} items"}
 
 
 # ═══════════════════════════════════════════
@@ -602,21 +650,18 @@ async def retry_task(
     if not log or log.product_pool_id != pool_id:
         raise HTTPException(status_code=404)
 
+    if log.task_type not in ("translate", "pricing"):
+        raise HTTPException(status_code=400, detail=f"Retry not supported for task type '{log.task_type}'")
+
+    # 重新入队：把现有日志置回 pending，由后台 worker 重新认领处理
     log.status = "pending"
     log.retry_count = (log.retry_count or 0) + 1
     log.message = None
     log.result = {}
+    log.started_at = None
+    log.completed_at = None
     await db.commit()
-
-    # Retrigger based on task_type
-    if log.task_type == "translate":
-        lang = log.language or "en"
-        thread = threading.Thread(target=lambda: _run_translation(pool_id, lang), daemon=True)
-        thread.start()
-    elif log.task_type == "pricing":
-        thread = threading.Thread(target=lambda: _run_pricing(pool_id), daemon=True)
-        thread.start()
-    else:
-        raise HTTPException(status_code=400, detail=f"Retry not supported for task type '{log.task_type}'")
+    worker.notify()
+    return {"message": "Retry queued", "task_id": task_id}
 
     return {"message": f"Retry started for {log.task_type} task", "retry_count": log.retry_count}

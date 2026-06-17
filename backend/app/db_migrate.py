@@ -17,6 +17,8 @@ CREATE TABLE {name} (
     handle VARCHAR(255),
     shopify_synced_at DATETIME,
     source_pool_id VARCHAR(36),
+    spu VARCHAR(64),
+    spu_code VARCHAR(64),
     title VARCHAR(500),
     title_cn VARCHAR(500),
     title_en VARCHAR(500),
@@ -78,6 +80,25 @@ CREATE TABLE IF NOT EXISTS transfer_jobs (
 )
 """
 
+MATERIALS_DDL = """
+CREATE TABLE IF NOT EXISTS materials (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    team_id VARCHAR(36) NOT NULL,
+    user_id VARCHAR(36),
+    product_id VARCHAR(36),
+    source_pool_id VARCHAR(36),
+    spu VARCHAR(64),
+    sku VARCHAR(128),
+    image_url TEXT,
+    description TEXT,
+    status VARCHAR(20) DEFAULT 'pending',
+    error TEXT,
+    position INTEGER DEFAULT 0,
+    created_at DATETIME,
+    updated_at DATETIME
+)
+"""
+
 # 旧表 → 新表拷贝时可能存在的重叠列
 _COPYABLE = [
     "id", "import_task_id", "team_id", "user_id", "shop_id",
@@ -111,6 +132,29 @@ def _sync_ensure(conn):
     conn.exec_driver_sql(SPU_RULES_DDL)
     conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_spu_rules_team_id ON spu_rules(team_id)")
 
+    # 1.65) platform_settings（平台级设置，超管管理）
+    conn.exec_driver_sql(
+        "CREATE TABLE IF NOT EXISTS platform_settings ("
+        "key VARCHAR(100) NOT NULL PRIMARY KEY, value TEXT, updated_at DATETIME)"
+    )
+
+    # 1.66) shops 增量补列：连接状态检测
+    if table_exists("shops"):
+        sc = columns("shops")
+        if "conn_status" not in sc:
+            conn.exec_driver_sql("ALTER TABLE shops ADD COLUMN conn_status VARCHAR(20) DEFAULT 'unknown'")
+        if "conn_checked_at" not in sc:
+            conn.exec_driver_sql("ALTER TABLE shops ADD COLUMN conn_checked_at DATETIME")
+        if "conn_error" not in sc:
+            conn.exec_driver_sql("ALTER TABLE shops ADD COLUMN conn_error TEXT")
+
+    # 1.7) materials（素材库）
+    conn.exec_driver_sql(MATERIALS_DDL)
+    conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_materials_team_id ON materials(team_id)")
+    conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_materials_product_id ON materials(product_id)")
+    conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_materials_spu ON materials(spu)")
+    conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_materials_status ON materials(status)")
+
     # 2) products
     if not table_exists("products"):
         conn.exec_driver_sql(PRODUCTS_DDL.format(name="products"))
@@ -124,6 +168,16 @@ def _sync_ensure(conn):
         conn.exec_driver_sql("ALTER TABLE products ADD COLUMN source_pool_id VARCHAR(36)")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_products_source_pool_id ON products(source_pool_id)")
         pc["source_pool_id"] = None
+
+    # 增量补列：spu / spu_code（商品款号）
+    if "spu" not in pc:
+        conn.exec_driver_sql("ALTER TABLE products ADD COLUMN spu VARCHAR(64)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_products_spu ON products(spu)")
+        pc["spu"] = None
+    if "spu_code" not in pc:
+        conn.exec_driver_sql("ALTER TABLE products ADD COLUMN spu_code VARCHAR(64)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_products_spu_code ON products(spu_code)")
+        pc["spu_code"] = None
 
     has_new = "body_html" in pc
     ref_not_null = "import_task_id" in pc and pc["import_task_id"][3] == 1

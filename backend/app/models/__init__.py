@@ -18,6 +18,17 @@ def new_uuid():
 
 
 # ──────────────────────────────────────
+# 平台级设置（超管后台管理，如 Shopify App 配置）。secret 类值加密存储。
+# ──────────────────────────────────────
+class PlatformSetting(Base):
+    __tablename__ = "platform_settings"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(Text)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+# ──────────────────────────────────────
 # 团队
 # ──────────────────────────────────────
 class Team(Base):
@@ -77,6 +88,10 @@ class Shop(Base):
     custom_domain = Column(String(255))
     tags = Column(String(255))
     is_active = Column(Boolean, default=True)
+    # 连接状态（定时检测 Shopify API 可用性）：unknown | ok | failed
+    conn_status = Column(String(20), default="unknown")
+    conn_checked_at = Column(DateTime(timezone=True))
+    conn_error = Column(Text)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     team = relationship("Team", back_populates="shops")
@@ -152,6 +167,10 @@ class Product(Base):
     shopify_synced_at = Column(DateTime(timezone=True))
     source_pool_id = Column(String(36), index=True)  # 来源选品池 id（标记是否转入）
 
+    # SPU（商品款号）：SPU 规则代码 + 5 位自增序号（按代码分别自增），如 MK00001
+    spu = Column(String(64), index=True)
+    spu_code = Column(String(64), index=True)  # 生成该 SPU 所用的规则代码（用于按代码续号）
+
     # 基本信息
     title = Column(String(500))           # 主标题（Shopify title）
     title_cn = Column(String(500))
@@ -197,6 +216,28 @@ class TransferJob(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     completed_at = Column(DateTime(timezone=True))
+
+
+# ──────────────────────────────────────
+# 素材库（商品图片 → 素材，AI 视觉生成描述）
+# ──────────────────────────────────────
+class Material(Base):
+    __tablename__ = "materials"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    team_id = Column(String(36), nullable=False, index=True)
+    user_id = Column(String(36))
+    product_id = Column(String(36), index=True)      # 所属商品
+    source_pool_id = Column(String(36), index=True)  # 来源选品池
+    spu = Column(String(64), index=True)             # 必填：所属 SPU
+    sku = Column(String(128), index=True)            # 可空：该图为某变体主图时绑定其 SKU
+    image_url = Column(Text)                          # 素材链接（图片）
+    description = Column(Text)                         # 素材描述（AI 视觉生成）
+    status = Column(String(20), default="pending", index=True)  # pending|running|done|failed
+    error = Column(Text)
+    position = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 # ──────────────────────────────────────

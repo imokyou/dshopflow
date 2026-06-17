@@ -191,7 +191,8 @@ def sync_shopify_task(self, import_task_id: str):
                 await db.commit()
                 return {"status": "error", "reason": "shop not found"}
 
-            shopify = ShopifyClient(shop.shop_domain, shop.access_token_encrypted)
+            from app.core.crypto import decrypt_secret
+            shopify = ShopifyClient(shop.shop_domain, decrypt_secret(shop.access_token_encrypted))
             raw = task.raw_data or {}
             translated = task.translated_data or {}
             pricing = task.pricing_result or {}

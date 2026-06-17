@@ -25,9 +25,3 @@ yarn-error.log*
 out/
 build/
 dist/
-
-# plasmo
-.plasmo
-
-# typescript
-.tsbuildinfo

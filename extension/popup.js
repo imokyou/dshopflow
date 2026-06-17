@@ -1,8 +1,16 @@
 // DropShipFlow Side Panel Logic — V2 选品池
-const API = "http://localhost:8000/api/v1"
-const ADMIN = "http://localhost:3000"
+// API / ADMIN 在运行时从 config.js 读取（可在设置中自定义，默认 localhost）
+let API = "http://localhost:8000/api/v1"
+let ADMIN = "http://localhost:3000"
 let userData = null
 let token = null
+
+// 从共享配置加载后端/后台域名（config.js 提供 getConfig）
+async function loadConfig() {
+  const c = await getConfig()
+  API = c.apiBase + "/api/v1"
+  ADMIN = c.adminBase
+}
 
 
 // ── 状态标签映射 ──
@@ -23,6 +31,7 @@ function statusTag(status) {
 
 // ── Init ──
 document.addEventListener("DOMContentLoaded", async () => {
+  await loadConfig()
   await checkAuth()
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === "local" && (changes.access_token || changes.user)) checkAuth()
@@ -76,7 +85,11 @@ async function verifyToken(tok) {
 
 async function extractTokenFromAdminTab() {
   try {
-    const tabs = await chrome.tabs.query({ url: ["http://localhost:3000/*", "http://127.0.0.1:3000/*"] })
+    // 按当前配置的管理后台地址匹配标签页（默认 localhost；自定义域名亦适用）
+    const patterns = new Set([ADMIN + "/*"])
+    const op = originPattern(ADMIN)
+    if (op) patterns.add(op)
+    const tabs = await chrome.tabs.query({ url: [...patterns] })
     for (const tab of tabs) {
       if (!tab.id) continue
       try {
@@ -144,6 +157,8 @@ async function sendScrape(tabId) {
 // ── 后台抓取任务（不阻塞 UI，可同时跑多个）──
 let activeJobs = 0
 let statusTimer = null
+// 正在抓取的 tabId 集合：同一 tab 不允许并发抓取，避免 autoScroll/快照互相踩踏
+const inFlightTabs = new Set()
 
 const TOAST_STYLE = {
   success: "background:#dcfce7;color:#166534;border:1px solid #86efac;",
@@ -174,11 +189,16 @@ async function scrapeProduct() {
     el.classList.remove("hidden")
     return
   }
+  if (inFlightTabs.has(tab.id)) {
+    showToast("⏳ 该商品页正在抓取中，请稍候…", "error")
+    return
+  }
   runScrapeJob(tab.id) // 不 await：后台进行，用户可继续操作
 }
 
 // 单个后台任务：抓取 → 入池 →（可选）关页 → 刷新列表
 async function runScrapeJob(tabId) {
+  inFlightTabs.add(tabId)
   activeJobs++
   renderCounter()
   let title = ""
@@ -200,6 +220,7 @@ async function runScrapeJob(tabId) {
       : (e.message || "抓取失败").slice(0, 40)
     showToast(`❌ ${title ? title + "：" : ""}${msg}`, "error")
   } finally {
+    inFlightTabs.delete(tabId)
     activeJobs--
     renderCounter()
   }
@@ -282,6 +303,82 @@ async function loadRecent() {
   }
 }
 
+// 切换到「未登录」视图（不调用 checkAuth，避免与其内部 apiCall 递归）
+function showLoggedOut() {
+  token = null
+  userData = null
+  const main = document.getElementById("main")
+  const footer = document.getElementById("footer")
+  const logout = document.getElementById("view-logout")
+  const status = document.getElementById("headerStatus")
+  if (main) main.classList.add("hidden")
+  if (footer) footer.classList.add("hidden")
+  if (status) status.textContent = ""
+  if (logout) logout.classList.remove("hidden")
+}
+
+// ── 设置（后端/后台域名）──
+function show(id, on) { const el = document.getElementById(id); if (el) el.classList.toggle("hidden", !on) }
+
+async function openSettings() {
+  const c = await getConfig()
+  const apiEl = document.getElementById("cfgApi")
+  const adminEl = document.getElementById("cfgAdmin")
+  if (apiEl) apiEl.value = c.apiBase
+  if (adminEl) adminEl.value = c.adminBase
+  const err = document.getElementById("cfgErr"); if (err) err.classList.add("hidden")
+  // 独占显示设置面板
+  show("view-settings", true)
+  show("main", false)
+  show("view-logout", false)
+  show("footer", false)
+}
+
+function closeSettings() {
+  show("view-settings", false)
+  checkAuth() // 回到登录/主视图
+}
+
+function normalizeBase(v, fallback) {
+  const s = (v || "").trim().replace(/\/+$/, "")
+  if (!s) return fallback
+  try {
+    const u = new URL(s)
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null
+    return `${u.protocol}//${u.host}` // 丢弃 path/query，仅保留源
+  } catch { return null }
+}
+
+async function saveSettings() {
+  const err = document.getElementById("cfgErr")
+  const showErr = m => { if (err) { err.textContent = m; err.classList.remove("hidden") } }
+  const apiBase = normalizeBase(document.getElementById("cfgApi")?.value, DEFAULT_API_BASE)
+  const adminBase = normalizeBase(document.getElementById("cfgAdmin")?.value, DEFAULT_ADMIN_BASE)
+  if (!apiBase || !adminBase) { showErr("地址格式不正确，需为 http(s):// 开头的有效 URL"); return }
+
+  // 请求访问这两个域名的权限（localhost 默认已在 host_permissions，request 直接通过）
+  const origins = [originPattern(apiBase), originPattern(adminBase)].filter(Boolean)
+  try {
+    const granted = await chrome.permissions.request({ origins })
+    if (!granted) { showErr("未授予域名访问权限，无法保存"); return }
+  } catch (e) {
+    showErr("权限请求失败：" + (e.message || e)); return
+  }
+
+  await chrome.storage.local.set({ apiBase, adminBase })
+  await loadConfig()
+  closeSettings()
+}
+
+async function resetSettings() {
+  await chrome.storage.local.remove(["apiBase", "adminBase"])
+  await loadConfig()
+  const apiEl = document.getElementById("cfgApi")
+  const adminEl = document.getElementById("cfgAdmin")
+  if (apiEl) apiEl.value = DEFAULT_API_BASE
+  if (adminEl) adminEl.value = DEFAULT_ADMIN_BASE
+}
+
 // ── API Helper ──
 async function apiCall(method, path, body) {
   const headers = { "Content-Type": "application/json" }
@@ -289,6 +386,12 @@ async function apiCall(method, path, body) {
   if (stored.access_token) headers["Authorization"] = `Bearer ${stored.access_token}`
   const resp = await fetch(API + path, { method, headers, body: body ? JSON.stringify(body) : undefined })
   const data = await resp.json().catch(() => ({}))
+  if (resp.status === 401) {
+    // 登录态失效：清除本地 token 并回到登录引导视图
+    await chrome.storage.local.remove(["access_token", "refresh_token", "user"])
+    showLoggedOut()
+    throw new Error("登录已过期，请重新登录")
+  }
   if (!resp.ok) throw new Error(data.detail || resp.statusText)
   return data
 }
@@ -327,6 +430,10 @@ document.addEventListener("DOMContentLoaded", () => {
   bind("btn-logout", "click", doLogout)
   bind("btn-refresh", "click", loadRecent)
   bind("brand", "click", () => chrome.tabs.create({ url: ADMIN }))
+  bind("btn-settings", "click", openSettings)
+  bind("btn-cfg-save", "click", saveSettings)
+  bind("btn-cfg-cancel", "click", closeSettings)
+  bind("btn-cfg-reset", "click", resetSettings)
 
   // 抓取按钮点击动效：按压 pop + 水波纹
   const scrapeBtn = document.getElementById("btn-scrape")
