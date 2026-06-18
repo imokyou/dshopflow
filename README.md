@@ -56,7 +56,41 @@ docker compose logs -f dsf-backend
 docker compose ps
 ```
 
-反向代理（证书签好、conf 放进 nginx 的 conf.d 后）：
+### 签发 SSL 证书（certbot，两个域名）
+
+前提：DNS 已把两个域名解析到本机，且 nginx 已在 80 端口服务 ACME 校验路径（`/.well-known/acme-challenge/` 指向下面挂载的 `nginx/www`）。在 compose 目录执行：
+
+```bash
+docker run --rm \
+  -v /etc/letsencrypt:/etc/letsencrypt \
+  -v $(pwd)/nginx/www:/var/www/certbot \
+  certbot/certbot certonly --webroot \
+    -w /var/www/certbot \
+    -d app.dshopflow.com \
+    --email lupt007@gmail.com \
+    --agree-tos --no-eff-email \
+    --non-interactive
+
+docker run --rm \
+  -v /etc/letsencrypt:/etc/letsencrypt \
+  -v $(pwd)/nginx/www:/var/www/certbot \
+  certbot/certbot certonly --webroot \
+    -w /var/www/certbot \
+    -d appapi.dshopflow.com \
+    --email lupt007@gmail.com \
+    --agree-tos --no-eff-email \
+    --non-interactive
+```
+
+证书签发到 `/etc/letsencrypt/live/<域名>/`，与 nginx 配置里的 `ssl_certificate` 路径一致。续期：
+```bash
+docker run --rm -v /etc/letsencrypt:/etc/letsencrypt -v $(pwd)/nginx/www:/var/www/certbot certbot/certbot renew
+# 续期后重载 nginx：nginx -s reload（可加进 cron 定时跑）
+```
+
+### 反向代理
+
+证书签好、conf 放进 nginx 的 conf.d 后：
 ```bash
 nginx -t && nginx -s reload
 ```
