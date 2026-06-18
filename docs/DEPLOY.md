@@ -35,7 +35,7 @@ openssl rand -hex 32
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-把两个值记下，下面填进 compose 的环境变量（建议放在 compose 同目录的 `.env`，**不要进 git**）。
+把两个值记下，第 3 步直接填进 compose 的 `environment`。
 
 > ⚠️ `CREDENTIAL_ENCRYPTION_KEY` 一旦设定**不要再改**，否则历史加密数据（店铺 token 等）将无法解密。
 
@@ -58,7 +58,7 @@ python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().
     restart: unless-stopped
     environment:
       POSTGRES_USER: dsf
-      POSTGRES_PASSWORD: "${DSF_PG_PASSWORD}"
+      POSTGRES_PASSWORD: "你的强数据库密码"        # ← 自定义；下面 DATABASE_URL 必须用同一个
       POSTGRES_DB: dropshipflow
     volumes:
       - dsf-pgdata:/var/lib/postgresql/data
@@ -78,9 +78,10 @@ python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().
         condition: service_healthy
     environment:
       DEBUG: "false"
-      SECRET_KEY: "${DSF_SECRET_KEY}"
-      CREDENTIAL_ENCRYPTION_KEY: "${DSF_CRED_KEY}"
-      DATABASE_URL: "postgresql+asyncpg://dsf:${DSF_PG_PASSWORD}@dsf-postgres:5432/dropshipflow"
+      SECRET_KEY: "第1步生成的hex"               # openssl rand -hex 32
+      CREDENTIAL_ENCRYPTION_KEY: "第1步生成的Fernet"  # 一旦设定不可改
+      # 密码用与上面 POSTGRES_PASSWORD 完全相同的值
+      DATABASE_URL: "postgresql+asyncpg://dsf:你的强数据库密码@dsf-postgres:5432/dropshipflow"
       LOCAL_STORAGE_DIR: "/data/storage"
       # CORS 必须为 JSON 数组，含管理后台公网来源
       CORS_ORIGINS: '["https://app.dshopflow.com"]'
@@ -121,13 +122,10 @@ volumes:
   dsf-redis-data:
 ```
 
-compose 同目录建一个 `.env`（给 `${DSF_*}` 用）：
-
-```
-DSF_SECRET_KEY=第1步生成的hex
-DSF_CRED_KEY=第1步生成的Fernet
-DSF_PG_PASSWORD=自定义一个强数据库密码
-```
+> 上面三处密钥/密码**直接写在 compose 的 `environment` 里**即可（你的 compose 多项目共用，沿用现有习惯）。注意：
+> - `DATABASE_URL` 里的密码必须与 `dsf-postgres` 的 `POSTGRES_PASSWORD` **完全一致**（后端靠它连库）。
+> - `SECRET_KEY` / `CREDENTIAL_ENCRYPTION_KEY` 是敏感值，确保该 compose 文件访问受限、勿提交到公开仓库。
+> - 想集中管理也可放到 compose 同目录 `.env` 用 `${VAR}` 引用（等价，二选一）。
 
 ---
 
@@ -219,7 +217,7 @@ docker compose logs -f dsf-backend                        # 看到 "Application 
 | 后台请求被 CORS 拦 | `CORS_ORIGINS` 是否含 `https://app.dshopflow.com`（JSON 数组格式） |
 | admin 调 API 报跨域/连不上 | admin 是否用正确的 `NEXT_PUBLIC_API_URL` **重新构建**过 |
 | 启动报「SECRET_KEY 仍为默认开发值」 | `DEBUG=false` 时必须设强 `SECRET_KEY` |
-| 后端连不上数据库 / 启动卡住 | `dsf-postgres` 是否健康（`depends_on: service_healthy`）；`DATABASE_URL` 用户名/密码/库名与 postgres 服务一致；`DSF_PG_PASSWORD` 已在 `.env` |
+| 后端连不上数据库 / 启动卡住 | `dsf-postgres` 是否健康（`depends_on: service_healthy`）；`DATABASE_URL` 里的密码与 `POSTGRES_PASSWORD` **完全一致**、用户名/库名也对得上 |
 | 在线监控/强制下线无效 | 未部署 `dsf-redis` 或 `REDIS_URL` 没指对（此功能可选，不影响其余） |
 | 店铺 token / Shopify 配置突然解不开 | 是否改过 `CREDENTIAL_ENCRYPTION_KEY`（不可变） |
 
