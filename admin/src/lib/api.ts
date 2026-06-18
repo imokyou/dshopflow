@@ -204,4 +204,5 @@ export const api = {
   getMaterials: (params?: string) => request("GET", `/materials${params ? `?${params}` : ""}`),
   updateMaterial: (id: string, data: any) => request("PUT", `/materials/${id}`, data),
   regenerateMaterial: (id: string) => request("POST", `/materials/${id}/regenerate`),
+  uploadMaterialsS3: (body: any = {}) => request<{ uploaded: number; failed: number; remaining: number }>("POST", "/materials/upload-s3", body),
 }

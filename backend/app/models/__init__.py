@@ -243,9 +243,10 @@ class Material(Base):
     sku = Column(String(128), index=True)            # 可空：该图为某变体主图时绑定其 SKU
     image_url = Column(Text)                          # 素材链接（图片）
     description = Column(Text)                         # 素材描述（AI 视觉生成）
-    status = Column(String(20), default="pending", index=True)  # pending|running|done|failed
+    status = Column(String(20), default="pending", index=True)  # pending|running|done|failed（AI 描述）
     error = Column(Text)
     position = Column(Integer, default=0)
+    s3_uploaded = Column(Boolean, default=False)     # 图片是否已转存到自建 S3（已传则批量上传时跳过）
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

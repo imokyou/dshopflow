@@ -31,8 +31,10 @@ async def _startup_migrate():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     # SQLite 既有 dev 库的增量补列（内部已 guard：仅 sqlite 跑，Postgres 直接跳过）
-    from app.db_migrate import ensure_schema
+    from app.db_migrate import ensure_schema, ensure_columns
     await ensure_schema()
+    # 跨库给既有表补新列（SQLite/Postgres 通用，如 materials.s3_uploaded）
+    await ensure_columns()
     # 恢复中断的转入队列任务
     try:
         from app.api.v1.products import resume_pending_jobs

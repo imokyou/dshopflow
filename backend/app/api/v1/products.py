@@ -633,6 +633,7 @@ async def _transfer_build_and_save(db: AsyncSession, pool, team_id: str, user_id
             db.add(Material(
                 team_id=team_id, user_id=user_id, product_id=p.id, source_pool_id=pool.id,
                 spu=m["spu"], sku=m["sku"], image_url=img_map.get(m["image_url"], m["image_url"]),
+                s3_uploaded=(m["image_url"] in img_map),  # 转入时已转存 S3 的标记为已上传
                 status="pending", position=i,
             ))
         await db.commit()

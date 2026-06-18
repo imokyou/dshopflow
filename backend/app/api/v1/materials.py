@@ -22,9 +22,14 @@ def _item(m: Material) -> dict:
         "id": m.id, "product_id": m.product_id, "source_pool_id": m.source_pool_id,
         "spu": m.spu, "sku": m.sku, "image_url": m.image_url,
         "description": m.description, "status": m.status, "error": m.error,
-        "position": m.position,
+        "position": m.position, "s3_uploaded": bool(m.s3_uploaded),
         "created_at": _ts(m.created_at), "updated_at": _ts(m.updated_at),
     }
+
+
+def _not_uploaded_clause():
+    # 未转存到 S3 且是外部 http(s) 图（S3 URL 也是 http，但那些 s3_uploaded=True 已排除）
+    return ((Material.s3_uploaded.is_(False)) | (Material.s3_uploaded.is_(None))) & (Material.image_url.like("http%"))
 
 
 @router.get("")
@@ -63,9 +68,16 @@ async def list_materials(
     for st, cnt in (await db.execute(cstmt.group_by(Material.status))).all():
         counts[st] = cnt
 
+    # 未上传 S3 的素材数（用于批量上传按钮显示）
+    s3stmt = select(func.count()).select_from(Material).where(_not_uploaded_clause())
+    if current_user.role != "super_admin":
+        s3stmt = s3stmt.where(Material.team_id == current_user.team_id)
+    s3_pending = await db.scalar(s3stmt)
+
     stmt = stmt.order_by(Material.updated_at.desc()).offset((page - 1) * page_size).limit(page_size)
     rows = list(await db.scalars(stmt))
-    return {"items": [_item(m) for m in rows], "total": total, "counts": counts, "page": page, "page_size": page_size}
+    return {"items": [_item(m) for m in rows], "total": total, "counts": counts,
+            "s3_pending": s3_pending or 0, "page": page, "page_size": page_size}
 
 
 async def _owned(material_id: str, current_user: User, db: AsyncSession) -> Material:
@@ -96,6 +108,54 @@ async def update_material(
     await db.commit()
     await db.refresh(m)
     return _item(m)
+
+
+class UploadS3Request(BaseModel):
+    ids: list[str] | None = None   # 指定素材；不传则处理本团队所有未上传的
+    limit: int = 80                # 每次最多处理多少张（前端可循环调用直到 remaining=0）
+
+
+@router.post("/upload-s3")
+async def upload_materials_s3(
+    req: UploadS3Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _: User = require(Permission.EDIT_PRODUCT),
+):
+    """批量把素材图转存到自建 S3（已上传的跳过）。返回本次结果 + 剩余未上传数。"""
+    from app.services import platform_settings_service as platform_settings
+    from app.services.image_service import image_service
+
+    s3cfg = await platform_settings.get_s3_config(db)
+    if s3cfg.get("backend") != "s3" or not s3cfg.get("bucket"):
+        raise HTTPException(status_code=400, detail="未配置 S3：请先在『平台设置 → 图片存储』选 S3 并填好")
+
+    stmt = select(Material).where(_not_uploaded_clause())
+    if current_user.role != "super_admin":
+        stmt = stmt.where(Material.team_id == current_user.team_id)
+    if req.ids:
+        stmt = stmt.where(Material.id.in_(req.ids))
+    batch = list(await db.scalars(stmt.order_by(Material.created_at.asc()).limit(max(1, min(req.limit, 200)))))
+
+    uploaded = failed = 0
+    if batch:
+        img_map = await image_service.mirror_batch([m.image_url for m in batch], prefix="dsf/material", s3cfg=s3cfg)
+        for m in batch:
+            new = img_map.get(m.image_url)
+            if new:
+                m.image_url = new
+                m.s3_uploaded = True
+                uploaded += 1
+            else:
+                failed += 1
+        await db.commit()
+
+    # 剩余未上传数（团队范围）
+    rstmt = select(func.count()).select_from(Material).where(_not_uploaded_clause())
+    if current_user.role != "super_admin":
+        rstmt = rstmt.where(Material.team_id == current_user.team_id)
+    remaining = await db.scalar(rstmt)
+    return {"uploaded": uploaded, "failed": failed, "remaining": remaining or 0}
 
 
 @router.post("/{material_id}/regenerate", status_code=202)

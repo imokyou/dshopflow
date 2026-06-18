@@ -204,3 +204,28 @@ async def ensure_schema():
         return
     async with engine.begin() as conn:
         await conn.run_sync(_sync_ensure)
+
+
+# ── 跨库增量补列（SQLite + Postgres 通用，用 inspector 判断、ALTER ADD COLUMN）──
+# 给已存在的表补新列（create_all 不会改既有表）。新建库 create_all 已含这些列，此处幂等跳过。
+_ADD_COLUMNS = {
+    "materials": [("s3_uploaded", "BOOLEAN DEFAULT FALSE")],
+}
+
+
+def _sync_ensure_columns(conn):
+    from sqlalchemy import inspect
+    insp = inspect(conn)
+    tables = set(insp.get_table_names())
+    for table, cols in _ADD_COLUMNS.items():
+        if table not in tables:
+            continue
+        have = {c["name"] for c in insp.get_columns(table)}
+        for name, ddl in cols:
+            if name not in have:
+                conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+
+
+async def ensure_columns():
+    async with engine.begin() as conn:
+        await conn.run_sync(_sync_ensure_columns)

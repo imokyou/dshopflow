@@ -31,6 +31,9 @@ export default function MaterialsPage() {
   const [editId, setEditId] = useState<string | null>(null)
   const [draft, setDraft] = useState("")
   const [lightbox, setLightbox] = useState<string | null>(null)
+  const [s3Pending, setS3Pending] = useState(0)
+  const [uploadingS3, setUploadingS3] = useState(false)
+  const [s3Done, setS3Done] = useState(0)
 
   const setBusyId = (id: string, on: boolean) => setBusy(s => { const n = new Set(s); on ? n.add(id) : n.delete(id); return n })
 
@@ -44,7 +47,7 @@ export default function MaterialsPage() {
       if (search) p.set("search", search)
       if (statusFilter) p.set("status", statusFilter)
       const d: any = await api.getMaterials(p.toString())
-      if (seq === reqId.current) { setData(d.items || []); setTotal(d.total || 0); setCounts(d.counts || {}) }
+      if (seq === reqId.current) { setData(d.items || []); setTotal(d.total || 0); setCounts(d.counts || {}); setS3Pending(d.s3_pending || 0) }
     } catch (e) { if (seq === reqId.current) toastError(e, "加载素材失败") }
     finally { if (seq === reqId.current) setLoading(false) }
   }, [page, search, statusFilter])
@@ -67,6 +70,23 @@ export default function MaterialsPage() {
     finally { setBusyId(id, false) }
   }
 
+  // 批量把素材图转存 S3（已传跳过）；循环到 remaining=0，或本批全失败则停止
+  const uploadS3 = async () => {
+    if (uploadingS3) return
+    setUploadingS3(true); setS3Done(0)
+    let up = 0, fail = 0
+    try {
+      while (true) {
+        const r = await api.uploadMaterialsS3({})
+        up += r.uploaded; fail += r.failed
+        setS3Done(up)
+        if (r.remaining <= 0 || r.uploaded <= 0) break  // 完成；或本批 0 成功(全失败)→停止避免死循环
+      }
+      toast(`S3 上传完成：成功 ${up}${fail ? `，失败 ${fail}` : ""}`, fail ? "error" : "success")
+    } catch (e) { toastError(e, "上传 S3 失败（确认平台设置里已配 S3）") }
+    finally { setUploadingS3(false); load() }
+  }
+
   const saveDesc = async (id: string) => {
     setBusyId(id, true)
     try { await api.updateMaterial(id, { description: draft }); setEditId(null); toast("已保存", "success"); load() }
@@ -84,7 +104,13 @@ export default function MaterialsPage() {
     <Layout>
       <div className="page-header">
         <h1 className="page-title">🖼️ 素材库 <span className="page-subtitle">商品图片素材 + AI 视觉描述（GLM-4.7-FlashX）</span></h1>
-        <button className="btn btn-ghost btn-sm" onClick={() => load()} disabled={loading}>{loading ? "⏳ 刷新中…" : "🔄 刷新"}</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn btn-primary btn-sm" onClick={uploadS3} disabled={uploadingS3 || (s3Pending === 0 && !uploadingS3)}
+            title="把未上传的素材图转存到自建 S3（已上传的跳过）">
+            {uploadingS3 ? `☁️ 上传中… 已 ${s3Done}` : `☁️ 批量上传 S3${s3Pending ? ` (${s3Pending})` : ""}`}
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={() => load()} disabled={loading}>{loading ? "⏳ 刷新中…" : "🔄 刷新"}</button>
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -105,13 +131,14 @@ export default function MaterialsPage() {
               <th style={{ width: 160 }}>SKU</th>
               <th>素材描述</th>
               <th style={{ width: 80 }}>状态</th>
+              <th style={{ width: 76 }}>S3</th>
               <th style={{ width: 140 }}>操作</th>
             </tr></thead>
             <tbody>
               {loading && data.length === 0 ? (
-                <tr><td colSpan={6} className="table-empty"><div className="spinner" /></td></tr>
+                <tr><td colSpan={7} className="table-empty"><div className="spinner" /></td></tr>
               ) : data.length === 0 ? (
-                <tr><td colSpan={6} className="table-empty"><div className="empty-icon">🖼️</div>暂无素材。从「选品池」转入商品时会自动生成素材并识图描述。</td></tr>
+                <tr><td colSpan={7} className="table-empty"><div className="empty-icon">🖼️</div>暂无素材。从「选品池」转入商品时会自动生成素材并识图描述。</td></tr>
               ) : data.map(m => (
                 <tr key={m.id}>
                   <td>
@@ -137,6 +164,11 @@ export default function MaterialsPage() {
                     )}
                   </td>
                   <td><Badge s={m.status} /></td>
+                  <td>
+                    {m.s3_uploaded
+                      ? <span style={{ fontSize: ".72rem", fontWeight: 600, color: "#15803d", background: "#f0fdf4", padding: "2px 8px", borderRadius: 10, whiteSpace: "nowrap" }}>✅ 已传</span>
+                      : <span style={{ fontSize: ".72rem", color: "var(--gray-400)" }}>—</span>}
+                  </td>
                   <td>
                     <div style={{ display: "flex", gap: 8, fontSize: ".78rem", whiteSpace: "nowrap" }}>
                       <a style={{ color: "var(--primary, #6366f1)", cursor: busy.has(m.id) ? "default" : "pointer", opacity: busy.has(m.id) ? .5 : 1 }} onClick={() => regen(m.id)}>{busy.has(m.id) ? "…" : "重新生成"}</a>
