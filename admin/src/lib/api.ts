@@ -139,6 +139,7 @@ export const api = {
   updateTeam: (id: string, data: any) => request("PUT", `/teams/${id}`, data),
 
   // Shops
+  batchGenerateSpu: (body: any) => request<{ updated: number }>("POST", "/products/batch-generate-spu", body),
   getShops: (teamId?: string) => request("GET", `/shops${teamId ? `?team_id=${teamId}` : ""}`),
   createShop: (data: any) => request("POST", "/shops", data),
   shopifyInstallUrl: (shop: string) => request<{ url: string }>("GET", `/shops/oauth/install?shop=${encodeURIComponent(shop)}`),

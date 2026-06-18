@@ -35,6 +35,23 @@ export default function ProductsPage() {
       .catch(() => toast("复制失败（需 https 或 localhost）", "error"))
   }
 
+  // 批量补 SPU
+  const [spuRules, setSpuRules] = useState<any[]>([])
+  const [spuModal, setSpuModal] = useState(false)
+  const [spuRuleId, setSpuRuleId] = useState("")
+  const [genningSpu, setGenningSpu] = useState(false)
+  useEffect(() => { api.getSpuRules().then((r: any) => setSpuRules(Array.isArray(r) ? r : (r?.items || []))).catch(() => setSpuRules([])) }, [])
+  const doBatchSpu = async () => {
+    if (!spuRuleId) return
+    setGenningSpu(true)
+    try {
+      const r = await api.batchGenerateSpu({ spu_rule_id: spuRuleId, only_missing: true })
+      toast(r.updated > 0 ? `已为 ${r.updated} 个商品补上 SPU` : "没有需要补 SPU 的商品", r.updated > 0 ? "success" : "info")
+      setSpuModal(false); load()
+    } catch (e: any) { toast(e?.message || "生成失败", "error") }
+    finally { setGenningSpu(false) }
+  }
+
   // 请求序号：丢弃过期（后发先至）响应，避免旧结果覆盖新筛选
   const reqIdRef = useRef(0)
   const load = useCallback(async () => {
@@ -80,8 +97,35 @@ export default function ProductsPage() {
     <Layout>
       <div className="page-header">
         <h1 className="page-title">📦 商品管理 <span className="page-subtitle">在后台增删改查商品并发布到 Shopify</span></h1>
-        <button className="btn btn-primary" onClick={() => router.push("/products/new")}>+ 添加商品</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn btn-secondary" onClick={() => { setSpuRuleId(""); setSpuModal(true) }}>🔖 批量补 SPU</button>
+          <button className="btn btn-primary" onClick={() => router.push("/products/new")}>+ 添加商品</button>
+        </div>
       </div>
+
+      {spuModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 99, padding: 24 }} onClick={() => !genningSpu && setSpuModal(false)}>
+          <div style={{ background: "#fff", borderRadius: 8, width: 420, maxWidth: "94vw", padding: 20, boxShadow: "0 8px 32px rgba(0,0,0,.2)" }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+              <strong>批量补 SPU</strong>
+              <button onClick={() => setSpuModal(false)} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 16 }}>✕</button>
+            </div>
+            <p style={{ fontSize: ".86rem", lineHeight: 1.6, marginBottom: 12 }}>给所有<strong style={{ color: "var(--primary)" }}>未生成 SPU</strong>的商品按规则补上 SPU，并重算变体 SKU（已有 SPU 的不动）。</p>
+            <div className="form-group">
+              <label>SPU 规则 *</label>
+              <select className="input" value={spuRuleId} onChange={e => setSpuRuleId(e.target.value)} style={{ borderColor: spuRuleId ? undefined : "#fca5a5" }}>
+                <option value="">请选择 SPU 规则</option>
+                {spuRules.map(r => <option key={r.id} value={r.id}>{r.name}（{r.code}）</option>)}
+              </select>
+              {spuRules.length === 0 && <div style={{ fontSize: ".72rem", color: "var(--red)", marginTop: 4 }}>还没有 SPU 规则，请先到「SPU规则」页创建。</div>}
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+              <button className="btn btn-secondary" disabled={genningSpu} onClick={() => setSpuModal(false)}>取消</button>
+              <button className="btn btn-primary" disabled={genningSpu || !spuRuleId} onClick={doBatchSpu}>{genningSpu ? "生成中…" : "确认补 SPU"}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
         <input className="input" placeholder="搜索商品标题…" value={search} onChange={e => setSearch(e.target.value)} style={{ width: 240 }} onKeyDown={e => e.key === "Enter" && load()} />

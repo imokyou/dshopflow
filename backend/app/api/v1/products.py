@@ -241,6 +241,51 @@ async def generate_spu(
     return {"spu": spu, "spu_code": code}
 
 
+class BatchGenerateSpuRequest(BaseModel):
+    spu_rule_id: str
+    ids: list[str] | None = None    # 指定商品；不传=本团队全部
+    only_missing: bool = True       # 仅给没有 SPU 的补（默认）；False=对指定 ids 强制重新生成
+
+
+@router.post("/batch-generate-spu")
+async def batch_generate_spu(
+    req: BatchGenerateSpuRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _: User = require(Permission.EDIT_PRODUCT),
+):
+    """批量给商品补 SPU（按 SPU 规则生成 SPU + 重算变体 SKU）。默认只补没有 SPU 的。"""
+    spu_rule = await db.get(SpuRule, req.spu_rule_id)
+    if not spu_rule or (current_user.role != "super_admin" and spu_rule.team_id != current_user.team_id):
+        raise HTTPException(status_code=400, detail="SPU 规则无效")
+    code = (spu_rule.code or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="该 SPU 规则未设置代码")
+
+    stmt = select(Product)
+    if current_user.role != "super_admin":
+        stmt = stmt.where(Product.team_id == current_user.team_id)
+    if req.ids:
+        stmt = stmt.where(Product.id.in_(req.ids))
+    if req.only_missing:
+        stmt = stmt.where((Product.spu.is_(None)) | (Product.spu == ""))
+    products = list(await db.scalars(stmt.order_by(Product.created_at.asc())))
+
+    updated = 0
+    for p in products:
+        if req.only_missing and p.spu:
+            continue
+        spu = await _next_spu(db, p.team_id, code, exclude_id=p.id)
+        p.spu = spu
+        p.spu_code = code
+        # 重算变体 SKU（SKU = 完整 SPU + 规格）
+        p.variants = [({**v, "sku": _make_sku(spu, v)} if isinstance(v, dict) else v) for v in (p.variants or [])]
+        await db.flush()  # 让下一个 _next_spu 看到刚写入的 spu，保证序号连续
+        updated += 1
+    await db.commit()
+    return {"updated": updated}
+
+
 # ── Detail ──
 @router.get("/{product_id}")
 async def get_product(product_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
