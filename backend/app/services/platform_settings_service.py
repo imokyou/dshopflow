@@ -57,6 +57,13 @@ async def get_shopify_config(db: AsyncSession) -> dict:
     }
 
 
+def _callback_url(admin_base: str) -> str:
+    if not admin_base:
+        return ""
+    from app.integrations.shopify import oauth
+    return oauth.frontend_callback_url(admin_base)
+
+
 async def get_public_settings(db: AsyncSession) -> dict:
     """供超管 UI 展示：secret 不回明文，只回是否已设置。"""
     rows = await _raw_map(db)
@@ -75,8 +82,8 @@ async def get_public_settings(db: AsyncSession) -> dict:
         "admin_base_url": shown("admin_base_url") or "http://localhost:3000",
         # secret 只回布尔：DB 有 或 env 有 即视为已设置
         "shopify_api_secret_set": bool(rows.get("shopify_api_secret") or settings.SHOPIFY_API_SECRET),
-        # 回调地址（前端展示给用户去 Partner app 填）：落前端商户后台页
-        "callback_url": (shown("admin_base_url").rstrip("/") + "/shops/oauth/callback") if shown("admin_base_url") else "",
+        # 回调地址（前端展示给用户去 Partner app 填）：落前端商户后台页（只取 origin，忽略误填 path）
+        "callback_url": _callback_url(shown("admin_base_url")),
     }
 
 

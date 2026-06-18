@@ -37,8 +37,15 @@ def normalize_shop(shop: str) -> str | None:
 
 
 def frontend_callback_url(admin_base_url: str) -> str:
-    """回调落前端（商户后台）：授权完 Shopify 跳回此页，前端再把 code 转给后端 exchange。"""
-    return f"{(admin_base_url or '').rstrip('/')}/shops/oauth/callback"
+    """回调落前端（商户后台）：授权完 Shopify 跳回此页，前端再把 code 转给后端 exchange。
+    只取域名 origin（scheme://host），忽略用户误填的 path，避免回调路径被重复拼接。"""
+    from urllib.parse import urlparse
+    raw = (admin_base_url or "").strip()
+    if "://" not in raw:
+        raw = "https://" + raw
+    u = urlparse(raw)
+    origin = f"{u.scheme}://{u.netloc}" if u.netloc else raw.rstrip("/")
+    return f"{origin}/shops/oauth/callback"
 
 
 def sign_state(team_id: str, user_id: str) -> str:
