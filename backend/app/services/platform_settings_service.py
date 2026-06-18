@@ -10,7 +10,7 @@ from app.config import settings
 from app.core.crypto import encrypt_secret, decrypt_secret
 from app.models import PlatformSetting
 
-SECRET_KEYS = {"shopify_api_secret"}
+SECRET_KEYS = {"shopify_api_secret", "s3_secret_key"}
 
 # key → env 兜底默认
 _ENV_FALLBACK = {
@@ -19,6 +19,13 @@ _ENV_FALLBACK = {
     "shopify_scopes": lambda: settings.SHOPIFY_SCOPES,
     "shopify_app_base_url": lambda: settings.SHOPIFY_APP_BASE_URL,
     "admin_base_url": lambda: settings.ADMIN_BASE_URL,
+    # 图片存储 / S3
+    "storage_backend": lambda: settings.STORAGE_BACKEND,
+    "s3_endpoint": lambda: settings.S3_ENDPOINT,
+    "s3_bucket": lambda: settings.S3_BUCKET,
+    "s3_access_key": lambda: settings.S3_ACCESS_KEY,
+    "s3_secret_key": lambda: settings.S3_SECRET_KEY,
+    "s3_public_url_prefix": lambda: settings.S3_PUBLIC_URL_PREFIX,
 }
 
 
@@ -57,6 +64,27 @@ async def get_shopify_config(db: AsyncSession) -> dict:
     }
 
 
+async def get_s3_config(db: AsyncSession) -> dict:
+    """解析后的图片存储/S3 配置（供 image_service 转存使用）。"""
+    rows = await _raw_map(db)
+
+    def val(key: str) -> str:
+        stored = rows.get(key)
+        if stored:
+            return ((decrypt_secret(stored) or "") if key in SECRET_KEYS else stored)
+        fb = _ENV_FALLBACK.get(key)
+        return (fb() if fb else "") or ""
+
+    return {
+        "backend": val("storage_backend") or "local",
+        "endpoint": val("s3_endpoint"),
+        "bucket": val("s3_bucket"),
+        "access_key": val("s3_access_key"),
+        "secret_key": val("s3_secret_key"),
+        "public_url_prefix": val("s3_public_url_prefix"),
+    }
+
+
 def _callback_url(admin_base: str) -> str:
     if not admin_base:
         return ""
@@ -84,6 +112,13 @@ async def get_public_settings(db: AsyncSession) -> dict:
         "shopify_api_secret_set": bool(rows.get("shopify_api_secret") or settings.SHOPIFY_API_SECRET),
         # 回调地址（前端展示给用户去 Partner app 填）：落前端商户后台页（只取 origin，忽略误填 path）
         "callback_url": _callback_url(shown("admin_base_url")),
+        # 图片存储 / S3（secret 不回明文）
+        "storage_backend": shown("storage_backend") or "local",
+        "s3_endpoint": shown("s3_endpoint"),
+        "s3_bucket": shown("s3_bucket"),
+        "s3_access_key": shown("s3_access_key"),
+        "s3_public_url_prefix": shown("s3_public_url_prefix"),
+        "s3_secret_key_set": bool(rows.get("s3_secret_key") or settings.S3_SECRET_KEY),
     }
 
 

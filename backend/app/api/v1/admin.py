@@ -22,6 +22,13 @@ class PlatformSettingsRequest(BaseModel):
     shopify_scopes: str | None = None
     shopify_app_base_url: str | None = None
     admin_base_url: str | None = None
+    # 图片存储 / S3
+    storage_backend: str | None = None     # "local" | "s3"
+    s3_endpoint: str | None = None
+    s3_bucket: str | None = None
+    s3_access_key: str | None = None
+    s3_secret_key: str | None = None       # 留空表示不修改
+    s3_public_url_prefix: str | None = None
 
 
 @router.get("/platform-settings")

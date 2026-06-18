@@ -5,7 +5,8 @@ import { api } from "@/lib/api"
 
 export default function PlatformSettingsPage() {
   const [cfg, setCfg] = useState<any>(null)
-  const [secret, setSecret] = useState("")        // 仅当用户输入时才提交
+  const [secret, setSecret] = useState("")        // shopify secret，仅当用户输入时才提交
+  const [s3Secret, setS3Secret] = useState("")    // s3 secret key，同上
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null)
 
@@ -24,10 +25,16 @@ export default function PlatformSettingsPage() {
         shopify_scopes: cfg.shopify_scopes || "",
         shopify_app_base_url: cfg.shopify_app_base_url || "",
         admin_base_url: cfg.admin_base_url || "",
+        storage_backend: cfg.storage_backend || "local",
+        s3_endpoint: cfg.s3_endpoint || "",
+        s3_bucket: cfg.s3_bucket || "",
+        s3_access_key: cfg.s3_access_key || "",
+        s3_public_url_prefix: cfg.s3_public_url_prefix || "",
       }
-      if (secret) body.shopify_api_secret = secret  // 留空不改
+      if (secret) body.shopify_api_secret = secret      // 留空不改
+      if (s3Secret) body.s3_secret_key = s3Secret       // 留空不改
       const updated = await api.updatePlatformSettings(body)
-      setCfg(updated); setSecret("")
+      setCfg(updated); setSecret(""); setS3Secret("")
       setMsg({ type: "ok", text: "已保存" })
     } catch (e: any) { setMsg({ type: "err", text: e.message }) }
     finally { setSaving(false) }
@@ -80,6 +87,41 @@ export default function PlatformSettingsPage() {
               {cfg.callback_url || (cfg.admin_base_url ? `${cfg.admin_base_url.replace(/\/$/, "")}/shops/oauth/callback` : "（先填管理后台地址）")}
             </code>
           </div>
+
+          <hr style={{ border: "none", borderTop: "1px solid var(--gray-100, #f1f5f9)", margin: "24px 0 16px" }} />
+
+          <h3 style={{ margin: "0 0 4px", fontSize: 15 }}>🖼️ 图片存储（S3 / MinIO）</h3>
+          <p style={{ fontSize: 12, color: "var(--gray-500)", margin: "0 0 16px" }}>
+            选「S3」后，选品池转入时自动把 1688 图片转存到你的 S3，商品图与素材改用自有 URL（避免 Shopify 拉 alicdn 图被防盗链拦）。改这里即时生效，无需重启。
+          </p>
+
+          <div className="form-group"><label>存储方式</label>
+            <select className="input" value={cfg.storage_backend || "local"} onChange={e => set("storage_backend", e.target.value)}>
+              <option value="local">本地（保留 1688 原链接，不转存）</option>
+              <option value="s3">S3 / MinIO（转入时转存）</option>
+            </select>
+          </div>
+
+          {cfg.storage_backend === "s3" && (
+            <>
+              <div className="form-group"><label>S3 Endpoint</label>
+                <input className="input" value={cfg.s3_endpoint || ""} onChange={e => set("s3_endpoint", e.target.value)} placeholder="自建 MinIO 填 https://minio.你的域名.com；用 AWS S3 留空" />
+              </div>
+              <div className="form-group"><label>Bucket</label>
+                <input className="input" value={cfg.s3_bucket || ""} onChange={e => set("s3_bucket", e.target.value)} placeholder="dshopflow" />
+              </div>
+              <div className="form-group"><label>Access Key</label>
+                <input className="input" value={cfg.s3_access_key || ""} onChange={e => set("s3_access_key", e.target.value)} placeholder="S3/MinIO 的 access key" />
+              </div>
+              <div className="form-group"><label>Secret Key</label>
+                <input className="input" type="password" value={s3Secret} onChange={e => setS3Secret(e.target.value)}
+                  placeholder={cfg.s3_secret_key_set ? "已设置（留空不修改）" : "未设置，请填入"} />
+              </div>
+              <div className="form-group"><label>公开访问前缀（Public URL Prefix）</label>
+                <input className="input" value={cfg.s3_public_url_prefix || ""} onChange={e => set("s3_public_url_prefix", e.target.value)} placeholder="https://minio.你的域名.com/dshopflow（桶的公开访问根）" />
+              </div>
+            </>
+          )}
 
           <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? "保存中…" : "保存"}</button>
         </div>

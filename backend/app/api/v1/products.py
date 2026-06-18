@@ -9,10 +9,10 @@ from sqlalchemy.orm import joinedload
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models import User, Product, Shop, Collection, ProductPool, PricingRule, TransferJob, SpuRule, Material, iso_utc
-from app.config import settings
 from app.core.permissions import require, Permission
 from app.services.shopify_product_service import sync_to_shopify
 from app.services.image_service import image_service
+from app.services import platform_settings_service as platform_settings
 from app.services.translate_service import translate_product, translate_terms
 from app.services.pricing_service import PricingEngine
 
@@ -586,20 +586,22 @@ async def _transfer_build_and_save(db: AsyncSession, pool, team_id: str, user_id
 
     seo_title, seo_desc = (_gen_seo(title_final, body) if opts.get("generate_seo", True) else (None, None))
 
-    # 转存图片到自建 S3（仅配置了 S3 时）：下载 1688 图(破防盗链)→上传 S3→替换为自有 URL，
-    # 解决 Shopify 服务端拉 alicdn 图被拦的问题；素材库也用自有 URL。失败保留原图、不阻断转入。
+    # 转存图片到自建 S3（S3 配置在「平台设置」DB 里管理）：下载 1688 图(破防盗链)→上传 S3→
+    # 替换为自有 URL，解决 Shopify 服务端拉 alicdn 图被拦的问题；素材库也用自有 URL。
+    # 失败保留原图、不阻断转入。
     img_map: dict = {}
-    if settings.STORAGE_BACKEND == "s3":
-        try:
+    try:
+        s3cfg = await platform_settings.get_s3_config(db)
+        if s3cfg.get("backend") == "s3" and s3cfg.get("bucket"):
             src_urls = [im["src"] for im in images if im.get("src")]
             src_urls += [s.get("image") for s in skus
                          if isinstance(s, dict) and s.get("image") and s.get("image") not in drop_small]
-            img_map = await image_service.mirror_batch(src_urls, prefix=f"dsf/{product_spu}")
+            img_map = await image_service.mirror_batch(src_urls, prefix=f"dsf/{product_spu}", s3cfg=s3cfg)
             for im in images:
                 if im.get("src") in img_map:
                     im["src"] = img_map[im["src"]]
-        except Exception:
-            img_map = {}
+    except Exception:
+        img_map = {}
 
     # 内容字段（重复转入时覆盖；保留 vendor/类型/标签/合集 等人工编辑）
     content = dict(

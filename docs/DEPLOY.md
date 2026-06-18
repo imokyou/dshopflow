@@ -89,14 +89,8 @@ openssl rand -hex 24
       CORS_ORIGINS: '["https://app.dshopflow.com"]'
       # 可选：加了 dsf-redis 才填
       REDIS_URL: "redis://dsf-redis:6379/0"
-      # 可选：图片转存到自建 S3/MinIO（配置后，选品池转入时自动把 1688 图转存到你的 S3，
-      #       商品图与素材都用自有 URL，避免 Shopify 拉 alicdn 图被防盗链拦）。不配则保留原 1688 链接。
-      # STORAGE_BACKEND: "s3"
-      # S3_ENDPOINT: "https://minio.你的域名.com"      # 自建 MinIO/兼容S3 填这个；用 AWS S3 则留空
-      # S3_BUCKET: "dshopflow"
-      # S3_ACCESS_KEY: "xxx"
-      # S3_SECRET_KEY: "xxx"
-      # S3_PUBLIC_URL_PREFIX: "https://minio.你的域名.com/dshopflow"   # 桶的公开访问前缀
+      # 图片转存到自建 S3/MinIO：推荐登录后台 → 超管「⚙️ 平台设置 → 图片存储」里配置（存数据库、
+      #   改了即时生效、无需重建容器）。下面 env 仅作兜底默认，一般不用填。
     volumes:
       - dsf-storage:/data           # 仅存商品图（DB 在 postgres）
     expose:
@@ -250,5 +244,5 @@ docker compose logs -f dsf-backend                                  # 看到 "Ap
 
 ## 备注
 
-- **图片转存（已支持）**：商品图原是 1688 alicdn 链接，Shopify 服务端拉取可能被防盗链拦。配置上面的 `STORAGE_BACKEND=s3` + S3 变量后，**选品池转入时会自动把图片下载(破防盗链)并上传到你的 S3**，商品图与素材库都改用自有 URL；转存失败的图保留原链接、不阻断转入。不配 S3 则维持原 1688 链接（本地开发默认）。
+- **图片转存（已支持，后台可配）**：商品图原是 1688 alicdn 链接，Shopify 服务端拉取可能被防盗链拦。在 **超管「⚙️ 平台设置 → 图片存储」** 选「S3」并填 endpoint/bucket/key/公开前缀后，**选品池转入时会自动把图片下载(破防盗链)并上传到你的 S3**，商品图与素材库都改用自有 URL；转存失败的图保留原链接、不阻断转入。选「本地」则维持原 1688 链接。配置存数据库、改了即时生效。
 - 后端**保持单副本**（进程内串行 worker）。数据库已是 Postgres，可独立扩容；后端要横向扩展需把后台任务迁到外部队列（见 `core/worker.py` 注释的心跳/租约方案）。
