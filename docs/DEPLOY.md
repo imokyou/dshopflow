@@ -128,6 +128,8 @@ volumes:
 > - `DATABASE_URL` 里的密码必须与 `dsf-postgres` 的 `POSTGRES_PASSWORD` **完全一致**（后端靠它连库）。
 > - `SECRET_KEY` / `CREDENTIAL_ENCRYPTION_KEY` 是敏感值，确保该 compose 文件访问受限、勿提交到公开仓库。
 > - 想集中管理也可放到 compose 同目录 `.env` 用 `${VAR}` 引用（等价，二选一）。
+>
+> **关于 redis（可选）**：`dsf-redis` 只给「在线监控 / 强制下线」用，不部署则该功能降级、其余正常。redis 容器内部端口 6379 走 docker 内网、未映射宿主机，**不会和你已有的其他 redis 撞端口**。也可复用现有 redis：去掉 `dsf-redis`，把 `REDIS_URL` 指向现有服务名 + 一个没占用的 db 号，如 `redis://你的redis服务名:6379/3`（需与本项目同一 docker 网络）。
 
 ---
 
