@@ -91,3 +91,6 @@ a{color:var(--primary);text-decoration:none}
   .main-content{margin-left:0;padding:10px}
   th,td{padding:5px 8px}
 }
+
+.link-title{cursor:pointer}
+.link-title:hover{color:var(--primary);text-decoration:underline}

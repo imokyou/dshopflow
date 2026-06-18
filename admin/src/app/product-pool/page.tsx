@@ -69,6 +69,16 @@ export default function ProductPoolPage() {
   // Me
   const [me, setMe] = useState<any>(null)
 
+  // 大图灯箱 + 复制
+  const [lightbox, setLightbox] = useState<string | null>(null)
+  const copy = (e: React.MouseEvent, text: string, label: string) => {
+    e.stopPropagation()
+    if (!text) return
+    navigator.clipboard?.writeText(text)
+      .then(() => toast(`已复制 ${label}：${text}`, "success"))
+      .catch(() => toast("复制失败（需 https 或 localhost）", "error"))
+  }
+
   useEffect(() => {
     api.getMe().then(setMe).catch(() => { })
   }, [])
@@ -302,11 +312,11 @@ export default function ProductPoolPage() {
                   </td>
                   <td>
                     {r.main_image_url ? (
-                      <img src={r.main_image_url} alt="" style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4 }} onError={e => { (e.target as HTMLImageElement).style.display = "none" }} />
+                      <img src={r.main_image_url} alt="" title="点击看大图" style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4, cursor: "zoom-in" }} onClick={e => { e.stopPropagation(); setLightbox(r.main_image_url) }} onError={e => { (e.target as HTMLImageElement).style.display = "none" }} />
                     ) : <span style={{ fontSize: 20 }}>📷</span>}
                   </td>
-                  <td>
-                    <div style={{ fontWeight: 500, lineHeight: 1.4 }}>{r.title_cn || "无标题"}</div>
+                  <td title="点击查看详情">
+                    <div style={{ fontWeight: 500, lineHeight: 1.4 }} className="link-title">{r.title_cn || "无标题"}</div>
                     <div style={{ fontSize: ".7rem", color: "var(--gray-400)" }}>{r.offer_id}</div>
                   </td>
                   <td>{r.sku_count ?? 0}</td>
@@ -320,8 +330,8 @@ export default function ProductPoolPage() {
                       ? <span style={{ fontSize: ".72rem", color: "#15803d", background: "#dcfce7", padding: "2px 8px", borderRadius: 10, fontWeight: 600, whiteSpace: "nowrap" }}>✅ 已转入</span>
                       : <span style={{ fontSize: ".72rem", color: "var(--gray-400)", whiteSpace: "nowrap" }}>未转入</span>}
                   </td>
-                  <td style={{ fontFamily: "monospace", fontSize: ".75rem", fontWeight: 600, color: r.spu ? "var(--gray-700)" : "var(--gray-400)", whiteSpace: "nowrap" }}>
-                    {r.spu || "—"}
+                  <td style={{ fontFamily: "monospace", fontSize: ".75rem", fontWeight: 600, color: r.spu ? "var(--gray-700)" : "var(--gray-400)", whiteSpace: "nowrap", cursor: r.spu ? "pointer" : "default" }} title={r.spu ? "点击复制 SPU" : ""} onClick={e => r.spu && copy(e, r.spu, "SPU")}>
+                    {r.spu || "—"}{r.spu && <span style={{ marginLeft: 4, opacity: .4 }}>📋</span>}
                   </td>
                   <td style={{ fontSize: ".72rem", color: "var(--gray-500)", whiteSpace: "nowrap" }}>
                     {r.updated_at ? new Date(r.updated_at).toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}
@@ -720,6 +730,12 @@ export default function ProductPoolPage() {
             <button className="btn btn-primary" onClick={() => { window.location.href = "/products" }}>前往商品管理</button>
           </div>
         </Modal>
+      )}
+
+      {lightbox && (
+        <div onClick={() => setLightbox(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <img src={lightbox} alt="" style={{ maxWidth: "90vw", maxHeight: "90vh", objectFit: "contain", borderRadius: 8 }} />
+        </div>
       )}
     </Layout>
   )

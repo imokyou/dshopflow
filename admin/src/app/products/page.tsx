@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import Layout from "@/components/layout/Layout"
 import { api } from "@/lib/api"
+import { toast } from "@/lib/toast"
 
 export const dynamic = "force-dynamic"
 
@@ -23,6 +24,16 @@ export default function ProductsPage() {
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("")
   const [busy, setBusy] = useState<string>("")
+  const [lightbox, setLightbox] = useState<string | null>(null)
+
+  // 复制文本到剪贴板（带提示）
+  const copy = (e: React.MouseEvent, text: string, label: string) => {
+    e.stopPropagation()
+    if (!text) return
+    navigator.clipboard?.writeText(text)
+      .then(() => toast(`已复制 ${label}：${text}`, "success"))
+      .catch(() => toast("复制失败（需 https 或 localhost）", "error"))
+  }
 
   // 请求序号：丢弃过期（后发先至）响应，避免旧结果覆盖新筛选
   const reqIdRef = useRef(0)
@@ -124,9 +135,9 @@ export default function ProductsPage() {
                       <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSel(p.id)} style={{ width: 16, height: 16, cursor: "pointer" }} />
                     </label>
                   </td>
-                  <td>{p.image ? <img src={p.image} alt="" style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4 }} onError={e => { (e.target as HTMLImageElement).style.display = "none" }} /> : <span style={{ fontSize: 20 }}>📷</span>}</td>
-                  <td><div style={{ fontWeight: 500 }}>{p.title || "未命名"}</div><div style={{ fontSize: ".7rem", color: "var(--gray-400)" }}>{p.variant_count} 个变体 · {p.vendor || "无供应商"}</div></td>
-                  <td style={{ fontFamily: "monospace", fontSize: ".78rem", fontWeight: 600, color: p.spu ? "var(--gray-700)" : "var(--gray-400)" }}>{p.spu || "—"}</td>
+                  <td>{p.image ? <img src={p.image} alt="" title="点击看大图" style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4, cursor: "zoom-in" }} onClick={e => { e.stopPropagation(); setLightbox(p.image) }} onError={e => { (e.target as HTMLImageElement).style.display = "none" }} /> : <span style={{ fontSize: 20 }}>📷</span>}</td>
+                  <td><div style={{ fontWeight: 500 }} className="link-title">{p.title || "未命名"}</div><div style={{ fontSize: ".7rem", color: "var(--gray-400)" }}>{p.variant_count} 个变体 · {p.vendor || "无供应商"}</div></td>
+                  <td style={{ fontFamily: "monospace", fontSize: ".78rem", fontWeight: 600, color: p.spu ? "var(--gray-700)" : "var(--gray-400)", cursor: p.spu ? "pointer" : "default" }} title={p.spu ? "点击复制 SPU" : ""} onClick={e => p.spu && copy(e, p.spu, "SPU")}>{p.spu || "—"}{p.spu && <span style={{ marginLeft: 4, opacity: .4, fontSize: ".7rem" }}>📋</span>}</td>
                   <td>{p.price != null ? `$${p.price}` : "—"}</td>
                   <td>{p.inventory ?? 0}</td>
                   <td>{BADGE(p.status)}</td>
@@ -159,6 +170,12 @@ export default function ProductsPage() {
               <button className="btn" style={{ background: "var(--red)", color: "#fff" }} disabled={deleting} onClick={performDelete}>{deleting ? "删除中…" : "确认删除"}</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {lightbox && (
+        <div onClick={() => setLightbox(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <img src={lightbox} alt="" style={{ maxWidth: "90vw", maxHeight: "90vh", objectFit: "contain", borderRadius: 8 }} />
         </div>
       )}
     </Layout>

@@ -17,7 +17,7 @@ export default function ProductEditPage() {
         id={id}
         onClose={() => router.push("/products")}
         onSaved={() => router.push("/products")}
-        onLoaded={(p) => { if (p?.title) setTabTitle(`/products/${id}`, p.title.slice(0, 16)) }}
+        onLoaded={(p) => { if (p?.title || p?.spu) setTabTitle(`/products/${id}`, p?.spu ? `${p.spu} ${(p.title || "").slice(0, 10)}` : p.title.slice(0, 16)) }}
       />
     </Layout>
   )
