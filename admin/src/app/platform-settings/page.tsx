@@ -77,7 +77,7 @@ export default function PlatformSettingsPage() {
           <div style={{ background: "var(--gray-50, #f8fafc)", border: "1px solid var(--gray-200, #e2e8f0)", borderRadius: 6, padding: "10px 12px", margin: "4px 0 16px", fontSize: 12 }}>
             <div style={{ color: "var(--gray-500)", marginBottom: 4 }}>👉 把下面这个回调地址填进 Partner app 的「Allowed redirection URL(s)」（需完全一致）：</div>
             <code style={{ wordBreak: "break-all", fontWeight: 600 }}>
-              {cfg.callback_url || (cfg.shopify_app_base_url ? `${cfg.shopify_app_base_url.replace(/\/$/, "")}/api/v1/shops/oauth/callback` : "（先填后端公网地址）")}
+              {cfg.callback_url || (cfg.admin_base_url ? `${cfg.admin_base_url.replace(/\/$/, "")}/shops/oauth/callback` : "（先填管理后台地址）")}
             </code>
           </div>
 

@@ -187,7 +187,7 @@ docker compose logs -f dsf-backend                        # 看到 "Application 
    - **API key / API secret**（Partner app 的）
    - **后端公网地址**：`https://appapi.dshopflow.com`
    - **管理后台地址**：`https://app.dshopflow.com`
-   - 保存。页面会显示**回调地址**：`https://appapi.dshopflow.com/api/v1/shops/oauth/callback`
+   - 保存。页面会显示**回调地址**：`https://app.dshopflow.com/shops/oauth/callback`
 3. 把该回调地址填进 Partner app 的 **Allowed redirection URL(s)**（需逐字一致）。
 4. 菜单 **店铺管理** → 🔗 连接 Shopify → 填 handle → 授权 → 回连。
 

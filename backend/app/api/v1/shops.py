@@ -1,14 +1,12 @@
 import asyncio
 from datetime import datetime, timezone
-from urllib.parse import quote
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
-from app.database import get_db, async_session
+from app.database import get_db
 from app.dependencies import get_current_user
 from app.models import User, Shop, Team, iso_utc
 from app.core.permissions import require, Permission, get_current_team_or_raise, QuotaChecker
@@ -17,11 +15,6 @@ from app.integrations.shopify import oauth
 from app.services import platform_settings_service as platform_settings
 
 router = APIRouter(prefix="/shops", tags=["shops"])
-
-
-def _admin_redirect(query: str, base: str) -> RedirectResponse:
-    b = (base or "http://localhost:3000").rstrip("/")
-    return RedirectResponse(url=f"{b}/shops?{query}")
 
 
 class CreateShopRequest(BaseModel):
@@ -164,10 +157,10 @@ async def oauth_install(
     db: AsyncSession = Depends(get_db),
     _: User = require(Permission.MANAGE_SHOPS),
 ):
-    """返回 Shopify 授权 URL（前端拿到后跳转）。"""
+    """返回 Shopify 授权 URL（前端拿到后跳转）。回调落前端商户后台页。"""
     cfg = await platform_settings.get_shopify_config(db)
-    if not cfg["api_key"] or not cfg["app_base_url"]:
-        raise HTTPException(status_code=500, detail="尚未配置 Shopify App（请在『平台设置』填 API key 与回调域名）")
+    if not cfg["api_key"] or not cfg["admin_base_url"]:
+        raise HTTPException(status_code=500, detail="尚未配置 Shopify App（请在『平台设置』填 API key 与管理后台地址）")
     if not current_user.team_id:
         raise HTTPException(status_code=400, detail="你不在任何团队中，无法绑定店铺")
     norm = oauth.normalize_shop(shop)
@@ -175,64 +168,63 @@ async def oauth_install(
         raise HTTPException(status_code=400, detail="店铺域名格式不正确，应形如 xxx.myshopify.com")
     state = oauth.sign_state(current_user.team_id, current_user.id)
     url = oauth.build_install_url(
-        norm, state,
-        api_key=cfg["api_key"], scopes=cfg["scopes"], app_base_url=cfg["app_base_url"],
+        norm, state, api_key=cfg["api_key"], scopes=cfg["scopes"],
+        redirect_uri=oauth.frontend_callback_url(cfg["admin_base_url"]),
     )
     return {"url": url}
 
 
-@router.get("/oauth/callback")
-async def oauth_callback(request: Request):
-    """Shopify 授权后重定向到此（浏览器顶层跳转，无我方 JWT；鉴权靠 state）。
-    校验 hmac + state → 用 code 换 token → upsert 店铺 → 跳回管理后台。"""
-    params = dict(request.query_params)
+class OAuthExchangeRequest(BaseModel):
+    params: dict  # 前端把回调页 URL 的全部 query 原样回传（用于 hmac 校验 + 取 code/state/shop）
+
+
+@router.post("/oauth/exchange")
+async def oauth_exchange(req: OAuthExchangeRequest, db: AsyncSession = Depends(get_db)):
+    """前端回调页拿到 code 后调此：验 hmac+state → 换 token → upsert 店铺。
+    鉴权靠签名的 state（含 team/user），secret 只在后端用。"""
+    params = req.params or {}
     shop = oauth.normalize_shop(params.get("shop", ""))
     code = params.get("code")
     state = params.get("state", "")
+    if not shop or not code:
+        return {"ok": False, "error": "缺少 shop 或 code"}
 
-    # callback 不经过 get_db 依赖：自开会话，先读配置（含 admin_base_url 用于跳转）
-    async with async_session() as db:
-        cfg = await platform_settings.get_shopify_config(db)
-        admin_base = cfg["admin_base_url"]
+    cfg = await platform_settings.get_shopify_config(db)
+    if not oauth.verify_hmac(params, cfg["api_secret"]):
+        return {"ok": False, "error": "HMAC 校验失败（请求可能被伪造）"}
+    st = oauth.verify_state(state)
+    if not st:
+        return {"ok": False, "error": "state 无效或已过期，请重新发起授权"}
 
-        if not shop or not code:
-            return _admin_redirect("error=" + quote("缺少 shop 或 code"), admin_base)
-        if not oauth.verify_hmac(params, cfg["api_secret"]):
-            return _admin_redirect("error=" + quote("HMAC 校验失败（请求可能被伪造）"), admin_base)
-        st = oauth.verify_state(state)
-        if not st:
-            return _admin_redirect("error=" + quote("state 无效或已过期，请重新发起授权"), admin_base)
+    try:
+        tok = await oauth.exchange_code(shop, code, api_key=cfg["api_key"], api_secret=cfg["api_secret"])
+        access_token = tok.get("access_token")
+        if not access_token:
+            return {"ok": False, "error": "未取得 access_token"}
+    except Exception as e:
+        return {"ok": False, "error": f"换取 token 失败: {e}"[:160]}
 
-        try:
-            tok = await oauth.exchange_code(shop, code, api_key=cfg["api_key"], api_secret=cfg["api_secret"])
-            access_token = tok.get("access_token")
-            if not access_token:
-                return _admin_redirect("error=" + quote("未取得 access_token"), admin_base)
-        except Exception as e:
-            return _admin_redirect("error=" + quote(f"换取 token 失败: {e}"[:120]), admin_base)
-
-        team_id = st["team_id"]
-        existing = await db.scalar(
-            select(Shop).where(Shop.team_id == team_id, Shop.shop_domain == shop)
-        )
-        if existing:
-            existing.access_token_encrypted = encrypt_secret(access_token)
-            existing.is_active = True
-        else:
-            team = await db.get(Team, team_id)
-            if team is None:
-                return _admin_redirect("error=" + quote("团队不存在"), admin_base)
-            checker = QuotaChecker(team)
-            if not await checker.check_shops(db):
-                return _admin_redirect("error=" + quote("店铺数量已达上限"), admin_base)
-            db.add(Shop(
-                team_id=team_id, created_by=st.get("user_id"),
-                shop_domain=shop, shop_name=shop,
-                access_token_encrypted=encrypt_secret(access_token),
-            ))
-        await db.commit()
-
-    return _admin_redirect("connected=" + quote(shop), admin_base)
+    team_id = st["team_id"]
+    existing = await db.scalar(
+        select(Shop).where(Shop.team_id == team_id, Shop.shop_domain == shop)
+    )
+    if existing:
+        existing.access_token_encrypted = encrypt_secret(access_token)
+        existing.is_active = True
+    else:
+        team = await db.get(Team, team_id)
+        if team is None:
+            return {"ok": False, "error": "团队不存在"}
+        checker = QuotaChecker(team)
+        if not await checker.check_shops(db):
+            return {"ok": False, "error": "店铺数量已达上限"}
+        db.add(Shop(
+            team_id=team_id, created_by=st.get("user_id"),
+            shop_domain=shop, shop_name=shop,
+            access_token_encrypted=encrypt_secret(access_token),
+        ))
+    await db.commit()
+    return {"ok": True, "shop": shop}
 
 
 async def _check_shop_conn(domain: str, token: str) -> dict:

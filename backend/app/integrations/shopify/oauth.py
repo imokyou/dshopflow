@@ -36,8 +36,9 @@ def normalize_shop(shop: str) -> str | None:
     return s if _SHOP_RE.match(s) else None
 
 
-def callback_url(app_base_url: str) -> str:
-    return f"{(app_base_url or '').rstrip('/')}/api/v1/shops/oauth/callback"
+def frontend_callback_url(admin_base_url: str) -> str:
+    """回调落前端（商户后台）：授权完 Shopify 跳回此页，前端再把 code 转给后端 exchange。"""
+    return f"{(admin_base_url or '').rstrip('/')}/shops/oauth/callback"
 
 
 def sign_state(team_id: str, user_id: str) -> str:
@@ -63,12 +64,12 @@ def verify_state(token: str) -> dict | None:
     return data
 
 
-def build_install_url(shop: str, state: str, *, api_key: str, scopes: str, app_base_url: str) -> str:
+def build_install_url(shop: str, state: str, *, api_key: str, scopes: str, redirect_uri: str) -> str:
     from urllib.parse import urlencode
     q = urlencode({
         "client_id": api_key,
         "scope": scopes,
-        "redirect_uri": callback_url(app_base_url),
+        "redirect_uri": redirect_uri,
         "state": state,
     })
     return f"https://{shop}/admin/oauth/authorize?{q}"

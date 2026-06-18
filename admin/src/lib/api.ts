@@ -142,6 +142,7 @@ export const api = {
   getShops: (teamId?: string) => request("GET", `/shops${teamId ? `?team_id=${teamId}` : ""}`),
   createShop: (data: any) => request("POST", "/shops", data),
   shopifyInstallUrl: (shop: string) => request<{ url: string }>("GET", `/shops/oauth/install?shop=${encodeURIComponent(shop)}`),
+  shopifyExchange: (params: Record<string, string>) => request<{ ok: boolean; shop?: string; error?: string }>("POST", "/shops/oauth/exchange", { params }),
   testShop: (id: string) => request("POST", `/shops/${id}/test`),
   refreshShopStatus: () => request<any[]>("POST", "/shops/refresh-status"),
   updateShop: (id: string, data: any) => request("PUT", `/shops/${id}`, data),
