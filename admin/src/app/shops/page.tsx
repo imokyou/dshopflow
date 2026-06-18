@@ -118,20 +118,18 @@ export default function ShopsPage() {
     try { await api.deleteShop(s.id); await reload() } catch (e: any) { alert(e.message) }
   }
 
-  // 查看/复制 access_token（方便复制线上 token 到本地开发用）
-  const [tokenInfo, setTokenInfo] = useState<{ domain: string; token: string } | null>(null)
+  // 点击 Token：直接取并复制到剪贴板（带提示，不弹框）
   const [tokenLoadingId, setTokenLoadingId] = useState("")
   const showToken = async (s: any) => {
     setTokenLoadingId(s.id)
-    try { const r = await api.getShopToken(s.id); setTokenInfo({ domain: r.shop_domain, token: r.access_token }) }
-    catch (e: any) { alert(e.message) }
-    finally { setTokenLoadingId("") }
-  }
-  const copyToken = () => {
-    if (!tokenInfo?.token) return
-    navigator.clipboard?.writeText(tokenInfo.token)
-      .then(() => setBanner({ type: "ok", text: "已复制 access_token 到剪贴板" }))
-      .catch(() => setBanner({ type: "err", text: "复制失败（需 https 或 localhost）" }))
+    try {
+      const r = await api.getShopToken(s.id)
+      if (!r.access_token) { setBanner({ type: "err", text: "该店铺暂无 token" }); return }
+      await navigator.clipboard.writeText(r.access_token)
+      setBanner({ type: "ok", text: `已复制 ${r.shop_domain} 的 access_token 到剪贴板` })
+    } catch (e: any) {
+      setBanner({ type: "err", text: "复制失败（需 https 或 localhost）：" + (e?.message || "") })
+    } finally { setTokenLoadingId("") }
   }
 
   // 连接状态徽标
@@ -221,28 +219,6 @@ export default function ShopsPage() {
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button type="button" className="btn btn-secondary" onClick={() => setEditShop(null)}>取消</button>
               <button type="button" className="btn btn-primary" disabled={editSaving || !editForm.shop_domain?.trim()} onClick={saveEdit}>{editSaving ? "保存中…" : "保存"}</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 查看 token 弹框 */}
-      {tokenInfo && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 99 }} onClick={() => setTokenInfo(null)}>
-          <div style={{ background: "#fff", borderRadius: 8, width: 520, maxWidth: "94vw", padding: 20, boxShadow: "0 8px 32px rgba(0,0,0,.2)" }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
-              <strong>店铺 Access Token</strong>
-              <button onClick={() => setTokenInfo(null)} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 16 }}>✕</button>
-            </div>
-            <div style={{ fontSize: 12, color: "var(--gray-500)", marginBottom: 8 }}>{tokenInfo.domain}</div>
-            <textarea readOnly value={tokenInfo.token || "（无 token）"} onFocus={e => e.currentTarget.select()}
-              style={{ width: "100%", minHeight: 70, padding: 10, fontSize: 12, fontFamily: "monospace", border: "1px solid #cbd5e1", borderRadius: 6, wordBreak: "break-all", resize: "vertical" }} />
-            <p style={{ fontSize: 11, color: "var(--gray-400)", margin: "8px 0 12px", lineHeight: 1.5 }}>
-              ⚠️ 这是店铺的敏感凭据，请勿外泄。可在本地开发时用「手动绑定（Token）」填入同一个店铺域名 + 此 token。
-            </p>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button className="btn btn-secondary" onClick={() => setTokenInfo(null)}>关闭</button>
-              <button className="btn btn-primary" onClick={copyToken} disabled={!tokenInfo.token}>📋 复制 Token</button>
             </div>
           </div>
         </div>
