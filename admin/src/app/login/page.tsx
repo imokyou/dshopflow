@@ -82,6 +82,9 @@ function LoginInner() {
               </div>
             )}
 
+            {/* 注册暂未开放（后期想好再放开：取消下方注释即可恢复 登录/注册 切换）。
+                邀请链接(?invite=)仍可注册以完成入队成员设密码。 */}
+            {/*
             <div style={{ display: "flex", marginBottom: 24, borderBottom: "2px solid var(--gray-100)", gap: 4 }}>
               {(["login", "register"] as const).map(m => (
                 <button key={m} onClick={() => { if (!inviteToken || m === "register") { setMode(m); setError("") } }}
@@ -92,13 +95,15 @@ function LoginInner() {
                 >{m === "login" ? "登录" : "注册"}</button>
               ))}
             </div>
+            */}
+            {!inviteToken && <div style={{ fontSize: 16, fontWeight: 700, color: "var(--gray-900)", marginBottom: 20 }}>账号登录</div>}
             <form onSubmit={submit}>
               {mode === "register" && <div className="form-group"><label>昵称</label><input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="你的名字" /></div>}
               <div className="form-group"><label>邮箱</label><input type="email" className="input" value={email} onChange={e => setEmail(e.target.value)} placeholder="admin@example.com" required /></div>
               <div className="form-group"><label>密码</label><input type="password" className="input" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required /></div>
               {mode === "register" && !inviteToken && <p style={{ fontSize: 12, color: "var(--gray-400)", margin: "8px 0 16px" }}>💡 第一个注册的用户自动成为<strong>超级管理员</strong>。</p>}
               {error && <div style={{ background: "var(--red-50)", color: "var(--red-700)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 16 }}>{error}</div>}
-              <button type="submit" className="btn btn-primary" style={{ width: "100%", padding: "12px 0", fontSize: 15 }} disabled={loading}>
+              <button type="submit" className="btn btn-primary" style={{ width: "100%", padding: "12px 0", fontSize: 15, justifyContent: "center" }} disabled={loading}>
                 {loading ? <span className="spinner" /> : mode === "login" ? "登录" : (inviteToken ? "设置密码并加入" : "创建账号")}
               </button>
             </form>
@@ -179,7 +184,7 @@ function ExtLoginView() {
         <div className="form-group"><label>邮箱</label><input type="email" className="input" value={email} onChange={e => setEmail(e.target.value)} placeholder="admin@example.com" required /></div>
         <div className="form-group"><label>密码</label><input type="password" className="input" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required /></div>
         {error && <div style={{ background: "var(--red-50)", color: "var(--red-700)", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 16 }}>{error}</div>}
-        <button type="submit" className="btn btn-primary" style={{ width: "100%", padding: "12px 0", fontSize: 15 }} disabled={loading}>
+        <button type="submit" className="btn btn-primary" style={{ width: "100%", padding: "12px 0", fontSize: 15, justifyContent: "center" }} disabled={loading}>
           {loading ? "登录中..." : "登录"}
         </button>
       </form>

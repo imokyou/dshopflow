@@ -53,6 +53,53 @@ class ImageService:
         else:
             return await self._copy_to_local(local_path, filename)
 
+    async def mirror(self, url: str, prefix: str = "img") -> Optional[str]:
+        """把远程图片（含 1688 防盗链）转存到 S3/本地，返回新的可访问 URL；失败返回 None。"""
+        if not url or not str(url).startswith("http"):
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                resp = await client.get(url, headers=self.HEADERS_1688)
+                resp.raise_for_status()
+                content = resp.read()
+            ext = self._guess_ext(url, resp.headers.get("content-type", ""))
+            filename = f"{prefix}_{uuid.uuid4().hex[:12]}{ext}"
+            if settings.STORAGE_BACKEND == "s3":
+                await asyncio.to_thread(self._put_bytes_s3, content, filename)
+            else:
+                (self._local_dir / Path(filename).name).write_bytes(content)
+                filename = Path(filename).name
+            return self.get_public_url(filename)
+        except Exception as e:
+            import logging
+            logging.getLogger("dropshipflow").warning("image mirror failed: %s (%s)", url, e)
+            return None
+
+    async def mirror_batch(self, urls: list[str], prefix: str = "img") -> dict:
+        """并发把多张远程图转存到 S3/本地，返回 {原url: 新url}（仅成功的）。"""
+        uniq, seen = [], set()
+        for u in urls:
+            if u and u not in seen:
+                seen.add(u); uniq.append(u)
+        if not uniq:
+            return {}
+        sem = asyncio.Semaphore(settings.PIPELINE_IMAGE_CONCURRENCY)
+
+        async def one(u: str):
+            async with sem:
+                return u, await self.mirror(u, prefix)
+
+        results = await asyncio.gather(*[one(u) for u in uniq])
+        return {u: new for u, new in results if new}
+
+    def _put_bytes_s3(self, content: bytes, filename: str) -> None:
+        client = self._get_s3_client()
+        content_type = mimetypes.guess_type(filename)[0] or "image/jpeg"
+        client.put_object(
+            Bucket=settings.S3_BUCKET, Key=filename, Body=content,
+            ContentType=content_type, ACL="public-read",
+        )
+
     def get_public_url(self, filename: str) -> str:
         """获取图片的公开访问 URL"""
         if settings.STORAGE_BACKEND == "s3":
