@@ -185,8 +185,8 @@ app.dshopflow.com { reverse_proxy dsf-admin:3000 }
 ```bash
 cd <你的 compose 目录>
 docker compose build dsf-backend dsf-admin
-docker compose up -d dsf-postgres dsf-backend dsf-admin   # 需要在线监控再加 dsf-redis
-docker compose logs -f dsf-backend                        # 看到 "Application startup complete" 即成功
+docker compose up -d dsf-postgres dsf-redis dsf-backend dsf-admin   # dsf-redis 可选(在线监控/强制下线)，不需要可去掉
+docker compose logs -f dsf-backend                                  # 看到 "Application startup complete" 即成功
 ```
 
 后端启动时会**按 ORM 模型自动建表**（首次在空 Postgres 上一步建全 20 张表，幂等，无需手动迁移）。

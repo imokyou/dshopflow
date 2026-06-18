@@ -45,9 +45,8 @@
 docker compose build dsf-backend dsf-admin
 
 # 2) 启动（postgres 先起，depends_on healthcheck 自动等它就绪）
-docker compose up -d dsf-postgres dsf-backend dsf-admin
-#   要在线监控/强制下线再带上 dsf-redis：
-#   docker compose up -d dsf-postgres dsf-redis dsf-backend dsf-admin
+docker compose up -d dsf-postgres dsf-redis dsf-backend dsf-admin
+#   dsf-redis 仅给「在线监控/强制下线」，不需要可从命令里去掉
 
 # 3) 看后端日志，出现 "Application startup complete" 即成功
 #    （首次会自动在空库建全部数据表，无需手动迁移）
