@@ -33,6 +33,8 @@
 openssl rand -hex 32
 # 凭据加密密钥（Fernet，用于加密店铺 token / AI key / Shopify secret）
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# 数据库密码（用 hex，不含 @ : / 等会破坏 DATABASE_URL 的字符）
+openssl rand -hex 24
 ```
 
 把两个值记下，第 3 步直接填进 compose 的 `environment`。
