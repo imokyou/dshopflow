@@ -148,6 +148,18 @@ async def delete_shop(
     return {"ok": True}
 
 
+@router.get("/{shop_id}/token")
+async def get_shop_token(
+    shop_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _: User = require(Permission.MANAGE_SHOPS),
+):
+    """返回该店铺的明文 access_token（仅本团队/超管），便于复制到本地开发使用。"""
+    shop = await _owned_shop(shop_id, current_user, db)
+    return {"shop_domain": shop.shop_domain, "access_token": decrypt_secret(shop.access_token_encrypted) or ""}
+
+
 # ── Shopify OAuth 接入 ──
 
 @router.get("/oauth/install")

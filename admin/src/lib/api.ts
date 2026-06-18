@@ -147,6 +147,7 @@ export const api = {
   refreshShopStatus: () => request<any[]>("POST", "/shops/refresh-status"),
   updateShop: (id: string, data: any) => request("PUT", `/shops/${id}`, data),
   deleteShop: (id: string) => request("DELETE", `/shops/${id}`),
+  getShopToken: (id: string) => request<{ shop_domain: string; access_token: string }>("GET", `/shops/${id}/token`),
 
 
   // Imports
