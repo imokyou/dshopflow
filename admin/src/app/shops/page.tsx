@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react"
 import Layout from "@/components/layout/Layout"
 import { api } from "@/lib/api"
+import { toast } from "@/lib/toast"
 
 export default function ShopsPage() {
   const [data, setData] = useState<any[]>([])
@@ -124,11 +125,11 @@ export default function ShopsPage() {
     setTokenLoadingId(s.id)
     try {
       const r = await api.getShopToken(s.id)
-      if (!r.access_token) { setBanner({ type: "err", text: "该店铺暂无 token" }); return }
+      if (!r.access_token) { toast("该店铺暂无 token", "error", 2500); return }
       await navigator.clipboard.writeText(r.access_token)
-      setBanner({ type: "ok", text: `已复制 ${r.shop_domain} 的 access_token 到剪贴板` })
+      toast(`✅ 已复制 ${r.shop_domain} 的 access_token`, "success", 2000)
     } catch (e: any) {
-      setBanner({ type: "err", text: "复制失败（需 https 或 localhost）：" + (e?.message || "") })
+      toast("复制失败（需 https 或 localhost）：" + (e?.message || ""), "error", 2500)
     } finally { setTokenLoadingId("") }
   }
 
