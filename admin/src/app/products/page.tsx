@@ -47,7 +47,7 @@ export default function ProductsPage() {
     try {
       const r = await api.batchGenerateSpu({ spu_rule_id: spuRuleId, only_missing: true })
       toast(r.updated > 0 ? `已为 ${r.updated} 个商品补上 SPU` : "没有需要补 SPU 的商品", r.updated > 0 ? "success" : "info")
-      setSpuModal(false); load()
+      setSpuModal(false); setSpuRuleId(""); load()  // 成功后清空已选 SPU 规则 + 刷新列表
     } catch (e: any) { toast(e?.message || "生成失败", "error") }
     finally { setGenningSpu(false) }
   }
