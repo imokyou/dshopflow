@@ -17,8 +17,8 @@
 | `dsf-redis`（可选） | Redis | 6379 | 仅「在线监控 / 强制下线」需要；不加则该功能降级，其余正常 |
 
 **两个子域名**（推荐）：
-- `https://api.你的域名.com` → `dsf-backend:8000`
-- `https://admin.你的域名.com` → `dsf-admin:3000`
+- `https://appapi.dshopflow.com` → `dsf-backend:8000`
+- `https://app.dshopflow.com` → `dsf-admin:3000`
 
 > 单域名 + 路径路由也可，但 `NEXT_PUBLIC_API_URL`、CORS、OAuth 回调三者要保持一致，子域名最省心。
 
@@ -83,7 +83,7 @@ python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().
       DATABASE_URL: "postgresql+asyncpg://dsf:${DSF_PG_PASSWORD}@dsf-postgres:5432/dropshipflow"
       LOCAL_STORAGE_DIR: "/data/storage"
       # CORS 必须为 JSON 数组，含管理后台公网来源
-      CORS_ORIGINS: '["https://admin.你的域名.com"]'
+      CORS_ORIGINS: '["https://app.dshopflow.com"]'
       # 可选：加了 dsf-redis 才填
       REDIS_URL: "redis://dsf-redis:6379/0"
     volumes:
@@ -97,7 +97,7 @@ python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().
       context: /srv/1688-shopify-importer/admin
       args:
         # 构建时内联，必须是后端公网地址 + /api/v1
-        NEXT_PUBLIC_API_URL: "https://api.你的域名.com/api/v1"
+        NEXT_PUBLIC_API_URL: "https://appapi.dshopflow.com/api/v1"
     restart: unless-stopped
     expose:
       - "3000"
@@ -134,22 +134,22 @@ DSF_PG_PASSWORD=自定义一个强数据库密码
 ## 4. 反向代理（把两个域名指到容器）
 
 把服务接到你反代所在的网络，并加路由：
-- `api.你的域名.com` → `dsf-backend:8000`
-- `admin.你的域名.com` → `dsf-admin:3000`
+- `appapi.dshopflow.com` → `dsf-backend:8000`
+- `app.dshopflow.com` → `dsf-admin:3000`
 
 按你现有反代选其一：
 
 **Caddy**（Caddyfile）：
 ```
-api.你的域名.com   { reverse_proxy dsf-backend:8000 }
-admin.你的域名.com { reverse_proxy dsf-admin:3000 }
+appapi.dshopflow.com   { reverse_proxy dsf-backend:8000 }
+app.dshopflow.com { reverse_proxy dsf-admin:3000 }
 ```
 
 **Traefik**（给服务加 labels）：
 ```yaml
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.dsfapi.rule=Host(`api.你的域名.com`)"
+      - "traefik.http.routers.dsfapi.rule=Host(`appapi.dshopflow.com`)"
       - "traefik.http.routers.dsfapi.tls.certresolver=le"
       - "traefik.http.services.dsfapi.loadbalancer.server.port=8000"
 ```
@@ -157,8 +157,8 @@ admin.你的域名.com { reverse_proxy dsf-admin:3000 }
 
 **Nginx**（站点 conf，需自备证书）：
 ```nginx
-server { server_name api.你的域名.com;   location / { proxy_pass http://dsf-backend:8000; proxy_set_header Host $host; proxy_set_header X-Forwarded-For $remote_addr; } }
-server { server_name admin.你的域名.com; location / { proxy_pass http://dsf-admin:3000; proxy_set_header Host $host; proxy_set_header X-Forwarded-For $remote_addr; } }
+server { server_name appapi.dshopflow.com;   location / { proxy_pass http://dsf-backend:8000; proxy_set_header Host $host; proxy_set_header X-Forwarded-For $remote_addr; } }
+server { server_name app.dshopflow.com; location / { proxy_pass http://dsf-admin:3000; proxy_set_header Host $host; proxy_set_header X-Forwarded-For $remote_addr; } }
 ```
 
 > 务必启用 HTTPS（Shopify OAuth 回调要求 https）。Caddy/Traefik 自动签证书；Nginx 用 certbot。
@@ -182,12 +182,12 @@ docker compose logs -f dsf-backend                        # 看到 "Application 
 
 ## 6. 首次初始化
 
-1. 打开 `https://admin.你的域名.com` → **注册第一个账号**：系统首个用户自动成为 `super_admin`（之后注册需邀请）。
+1. 打开 `https://app.dshopflow.com` → **注册第一个账号**：系统首个用户自动成为 `super_admin`（之后注册需邀请）。
 2. 用超管登录 → 菜单 **⚙️ 平台设置**，填 Shopify App：
    - **API key / API secret**（Partner app 的）
-   - **后端公网地址**：`https://api.你的域名.com`
-   - **管理后台地址**：`https://admin.你的域名.com`
-   - 保存。页面会显示**回调地址**：`https://api.你的域名.com/api/v1/shops/oauth/callback`
+   - **后端公网地址**：`https://appapi.dshopflow.com`
+   - **管理后台地址**：`https://app.dshopflow.com`
+   - 保存。页面会显示**回调地址**：`https://appapi.dshopflow.com/api/v1/shops/oauth/callback`
 3. 把该回调地址填进 Partner app 的 **Allowed redirection URL(s)**（需逐字一致）。
 4. 菜单 **店铺管理** → 🔗 连接 Shopify → 填 handle → 授权 → 回连。
 
@@ -216,7 +216,7 @@ docker compose logs -f dsf-backend                        # 看到 "Application 
 | 现象 | 排查 |
 |------|------|
 | OAuth 回调失败 / redirect_uri mismatch | Partner app 的 Allowed redirection URL 与「平台设置」回调地址要**逐字一致**（含 https、无尾斜杠差异） |
-| 后台请求被 CORS 拦 | `CORS_ORIGINS` 是否含 `https://admin.你的域名.com`（JSON 数组格式） |
+| 后台请求被 CORS 拦 | `CORS_ORIGINS` 是否含 `https://app.dshopflow.com`（JSON 数组格式） |
 | admin 调 API 报跨域/连不上 | admin 是否用正确的 `NEXT_PUBLIC_API_URL` **重新构建**过 |
 | 启动报「SECRET_KEY 仍为默认开发值」 | `DEBUG=false` 时必须设强 `SECRET_KEY` |
 | 后端连不上数据库 / 启动卡住 | `dsf-postgres` 是否健康（`depends_on: service_healthy`）；`DATABASE_URL` 用户名/密码/库名与 postgres 服务一致；`DSF_PG_PASSWORD` 已在 `.env` |
