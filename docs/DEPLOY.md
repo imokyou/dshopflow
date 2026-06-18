@@ -153,13 +153,26 @@ app.dshopflow.com { reverse_proxy dsf-admin:3000 }
 ```
 （admin 同理，端口 3000）
 
-**Nginx**（站点 conf，需自备证书）：
-```nginx
-server { server_name appapi.dshopflow.com;   location / { proxy_pass http://dsf-backend:8000; proxy_set_header Host $host; proxy_set_header X-Forwarded-For $remote_addr; } }
-server { server_name app.dshopflow.com; location / { proxy_pass http://dsf-admin:3000; proxy_set_header Host $host; proxy_set_header X-Forwarded-For $remote_addr; } }
-```
+**Nginx**：完整可用配置见 **[`docs/nginx-dshopflow.conf`](nginx-dshopflow.conf)**（含 HTTP→HTTPS、SSL、代理头、超时）。用法：
 
-> 务必启用 HTTPS（Shopify OAuth 回调要求 https）。Caddy/Traefik 自动签证书；Nginx 用 certbot。
+1. **决定 `proxy_pass` 目标**（配置文件里两种都标了）：
+   - **宿主机 nginx**：给容器加宿主机端口映射，再让 nginx 指向它。在 compose 的两个服务加：
+     ```yaml
+     dsf-backend:
+       ports: ["127.0.0.1:8801:8000"]   # 配合 nginx proxy_pass http://127.0.0.1:8801
+     dsf-admin:
+       ports: ["127.0.0.1:3001:3000"]   # 配合 nginx proxy_pass http://127.0.0.1:3001
+     ```
+     （只绑 `127.0.0.1`，不对公网开放，安全。）
+   - **Docker 内 nginx**（与本项目同 compose 网络）：把配置里的 `proxy_pass` 改成服务名
+     `http://dsf-backend:8000` / `http://dsf-admin:3000`，则**无需** ports 映射，`expose` 即可。
+2. **签证书**（Shopify OAuth 要求 https）：
+   ```bash
+   certbot certonly --webroot -w /var/www/certbot -d appapi.dshopflow.com -d app.dshopflow.com
+   ```
+3. 把 conf 放进 nginx 的 `conf.d/` → `nginx -t && nginx -s reload`。
+
+> Caddy / Traefik 会自动签证书，无需手动 certbot。
 
 ---
 
