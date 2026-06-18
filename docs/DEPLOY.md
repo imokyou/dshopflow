@@ -43,7 +43,7 @@ python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().
 
 ## 2. 取得代码
 
-把本仓库放到服务器（与你的 compose 同机），例如 `/srv/1688-shopify-importer`。
+把本仓库放到服务器（与你的 compose 同机），例如 `/opt/myapp/dshopflow`。
 （`.env`、`*.db`、`storage/`、`logs/` 已在 `.gitignore`，不会带上本地数据。）
 
 ---
@@ -71,7 +71,7 @@ python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().
 
   dsf-backend:
     build:
-      context: /srv/1688-shopify-importer/backend
+      context: /opt/myapp/dshopflow/backend
     restart: unless-stopped
     depends_on:
       dsf-postgres:
@@ -95,7 +95,7 @@ python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().
 
   dsf-admin:
     build:
-      context: /srv/1688-shopify-importer/admin
+      context: /opt/myapp/dshopflow/admin
       args:
         # 构建时内联，必须是后端公网地址 + /api/v1
         NEXT_PUBLIC_API_URL: "https://appapi.dshopflow.com/api/v1"
